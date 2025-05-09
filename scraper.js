@@ -175,6 +175,7 @@ const productCodes = [
   "MBGBH610MKD4",
   "MBMXB760M-F",
   "ME16KF436C18BB2",
+  "TBLENZAC50084PE",
 ];
 
 // Función principal
