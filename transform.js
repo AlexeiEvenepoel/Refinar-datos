@@ -1,5 +1,6 @@
 const XLSX = require("xlsx");
 const fs = require("fs");
+const { getProductImage, processProductCodes } = require("./scraper"); // Importamos las funciones del scraper
 
 /**
  * Genera una descripción para el producto basada en su información
@@ -58,8 +59,10 @@ function generateDescription(productInfo) {
  * @param {string} inputFilePath Ruta del archivo CSV de entrada
  * @param {string} outputDir Directorio de salida
  */
-function processProducts(inputFilePath, outputDir) {
+async function processProducts(inputFilePath, outputDir) {
   try {
+    console.log("Iniciando procesamiento de datos...");
+
     // Leer el archivo
     const workbook = XLSX.readFile(inputFilePath);
     const worksheet = workbook.Sheets[workbook.SheetNames[0]];
@@ -70,11 +73,15 @@ function processProducts(inputFilePath, outputDir) {
 
     let currentCategory = "";
     const products = [];
+    const productCodes = []; // Para almacenar los códigos de productos
 
     // Mapas para mantener las marcas y categorías únicas
     const brandsMap = new Map();
     const categoriesMap = new Map();
 
+    console.log("Extrayendo información básica y códigos de producto...");
+
+    // Primera pasada: extraer todos los datos básicos y los códigos de producto
     for (const row of rawData) {
       // Filtrar filas vacías o no relevantes
       if (!row || row.length < 3 || !row[0]) continue;
@@ -96,6 +103,59 @@ function processProducts(inputFilePath, outputDir) {
           if (!categoriesMap.has(currentCategory)) {
             categoriesMap.set(currentCategory, categoriesMap.size + 1);
           }
+        }
+        continue;
+      }
+
+      // Si es una fila de producto, extraer el código
+      if (currentCategory && row[1] && !row[1].toString().includes("CODIGO")) {
+        const code = row[1] ? row[1].toString().trim() : "";
+        if (code) {
+          productCodes.push(code);
+        }
+      }
+    }
+
+    console.log(
+      `Se han identificado ${productCodes.length} códigos de productos.`
+    );
+    console.log("Obteniendo imágenes para todos los productos...");
+
+    // Llamamos al servicio del scraper para obtener todas las imágenes
+    const imageResults = await processProductCodes(productCodes);
+
+    // Convertir los resultados a un mapa para acceso fácil
+    const imageMap = new Map();
+    for (const result of imageResults) {
+      imageMap.set(result.productCode, {
+        imageUrl: result.imageUrl,
+        imageTitle: result.imageTitle,
+      });
+    }
+
+    console.log(`Se obtuvieron ${imageMap.size} imágenes de productos.`);
+    console.log("Procesando datos completos de productos...");
+
+    // Reiniciar para la segunda pasada
+    currentCategory = "";
+
+    // Segunda pasada: procesar todos los datos con las imágenes
+    for (const row of rawData) {
+      // Filtrar filas vacías o no relevantes
+      if (!row || row.length < 3 || !row[0]) continue;
+
+      // Ignorar líneas divisorias o de formato
+      if (
+        row[0].toString().includes("_______________") ||
+        row[0].toString().includes("__________________________________")
+      ) {
+        continue;
+      }
+
+      // Actualizar categoría actual si es línea de categoría
+      if (row[1] && row[1].toString().includes("CODIGO")) {
+        if (row[2] && typeof row[2] === "string") {
+          currentCategory = row[2].trim();
         }
         continue;
       }
@@ -126,6 +186,12 @@ function processProducts(inputFilePath, outputDir) {
           }
 
           if (cleanTitle && cleanTitle !== "" && price > 0) {
+            // Obtener información de la imagen
+            const imageInfo = imageMap.get(code) || {
+              imageUrl: "",
+              imageTitle: `Producto ${code}`,
+            };
+
             // Generar descripción basada en la información del producto
             const productInfo = {
               title: cleanTitle,
@@ -152,6 +218,8 @@ function processProducts(inputFilePath, outputDir) {
               Featured: Math.random() > 0.7, // 30% de probabilidad
               Stock: stock,
               ProductCode: code,
+              ImageUrl: imageInfo.imageUrl, // Nueva columna con URL de imagen
+              ImageTitle: imageInfo.imageTitle, // Título de la imagen
             });
           }
         } catch (err) {
@@ -159,6 +227,9 @@ function processProducts(inputFilePath, outputDir) {
         }
       }
     }
+
+    console.log(`Procesados ${products.length} productos completos.`);
+    console.log("Generando archivos Excel...");
 
     // Crear archivo de productos
     const productsWorkbook = XLSX.utils.book_new();
@@ -211,7 +282,7 @@ function processProducts(inputFilePath, outputDir) {
 }
 
 // Configuración
-const inputFile = "csv/DCW_20250508062928.csv";
+const inputFile = "csv/DCW_20250509062026.csv";
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 const outputDir = "./output";
 
@@ -220,5 +291,9 @@ if (!fs.existsSync(outputDir)) {
   fs.mkdirSync(outputDir);
 }
 
-// Ejecutar
-processProducts(inputFile, outputDir);
+// Ejecutar (ahora es async)
+(async () => {
+  console.log("Iniciando proceso de transformación...");
+  await processProducts(inputFile, outputDir);
+  console.log("Proceso completado!");
+})();

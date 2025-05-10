@@ -133,26 +133,128 @@ async function processProductCodes(productCodes) {
 }
 
 /**
- * Guarda los resultados en un archivo Excel
- * @param {Array} results - Resultados del procesamiento
+ * Lee los productos refinados del archivo Excel
+ * @param {string} excelPath - Ruta al archivo Excel con productos refinados
+ * @returns {Array} - Array de productos
  */
-function saveToExcel(results) {
-  const outputDir = "./output";
+function readRefinedProducts(excelPath) {
+  console.log(`Leyendo productos refinados de: ${excelPath}`);
 
-  // Asegurar que existe la carpeta output
-  if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir);
+  try {
+    // Leer el archivo Excel
+    const workbook = XLSX.readFile(excelPath);
+    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+    const products = XLSX.utils.sheet_to_json(worksheet);
+
+    console.log(`Se han leído ${products.length} productos refinados`);
+    return products;
+  } catch (error) {
+    console.error(`Error leyendo archivo Excel: ${error.message}`);
+    return [];
   }
+}
 
+/**
+ * Guarda los productos con imágenes en un nuevo archivo Excel
+ * @param {Array} products - Productos con información
+ * @param {Map} imageMap - Mapa de imágenes por código
+ * @param {string} outputPath - Ruta del archivo de salida
+ */
+function saveProductsWithImages(products, imageMap, outputPath) {
+  console.log("Generando archivo Excel con productos e imágenes...");
+
+  // Agregar las URLs de las imágenes a cada producto
+  const productsWithImages = products.map((product) => {
+    const imageInfo = imageMap.get(product.ProductCode) || {
+      imageUrl: constructDirectImageUrl(product.ProductCode),
+      imageTitle: `Producto ${product.ProductCode}`,
+    };
+
+    return {
+      ...product,
+      ImageUrl: imageInfo.imageUrl,
+      ImageTitle: imageInfo.imageTitle,
+    };
+  });
+
+  // Crear y guardar el archivo Excel
+  const workbook = XLSX.utils.book_new();
+  const worksheet = XLSX.utils.json_to_sheet(productsWithImages);
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Productos");
+
+  XLSX.writeFile(workbook, outputPath);
+
+  console.log(`Archivo guardado con éxito en: ${outputPath}`);
+  return outputPath;
+}
+
+/**
+ * Función principal que procesa los productos refinados y agrega las URLs de las imágenes
+ * @param {string} refinedProductsPath - Ruta al archivo Excel con productos refinados
+ * @param {string} outputPath - Ruta donde guardar el nuevo archivo
+ */
+async function processRefinedProducts(refinedProductsPath, outputPath) {
+  try {
+    console.log("Iniciando procesamiento de productos refinados...");
+
+    // Leer productos refinados
+    const products = readRefinedProducts(refinedProductsPath);
+    if (products.length === 0) {
+      console.error("No se encontraron productos para procesar.");
+      return;
+    }
+
+    // Extraer códigos de producto
+    const productCodes = products
+      .map((product) => product.ProductCode)
+      .filter((code) => code); // Eliminar códigos vacíos
+
+    console.log(
+      `Se han identificado ${productCodes.length} códigos de productos.`
+    );
+
+    // Procesar códigos para obtener imágenes
+    console.log("Obteniendo imágenes para los productos...");
+    const imageResults = await processProductCodes(productCodes);
+
+    // Crear mapa de imágenes para acceso rápido
+    const imageMap = new Map();
+    imageResults.forEach((result) => {
+      imageMap.set(result.productCode, {
+        imageUrl: result.imageUrl,
+        imageTitle: result.imageTitle,
+      });
+    });
+
+    // Guardar productos con URLs de imágenes
+    saveProductsWithImages(products, imageMap, outputPath);
+
+    // También guardar solo las imágenes en un archivo separado
+    const imagesOnlyPath = path.join(
+      path.dirname(outputPath),
+      "product_images.xlsx"
+    );
+    saveToExcel(imageResults, imagesOnlyPath);
+
+    console.log("Proceso completado con éxito.");
+  } catch (error) {
+    console.error("Error en el proceso:", error);
+  }
+}
+
+/**
+ * Guarda los resultados de las imágenes en un archivo Excel
+ * @param {Array} results - Resultados del procesamiento
+ * @param {string} outputFile - Ruta del archivo de salida
+ */
+function saveToExcel(results, outputFile) {
   const workbook = XLSX.utils.book_new();
   const worksheet = XLSX.utils.json_to_sheet(results);
 
   XLSX.utils.book_append_sheet(workbook, worksheet, "Images");
-
-  const outputFile = path.join(outputDir, "product_images.xlsx");
   XLSX.writeFile(workbook, outputFile);
 
-  console.log(`Resultados guardados en: ${outputFile}`);
+  console.log(`Resultados de imágenes guardados en: ${outputFile}`);
   return outputFile;
 }
 
@@ -169,32 +271,42 @@ async function testSingleProduct(code) {
   console.log(`- URL de imagen: ${result.imageUrl}`);
 }
 
-// Array de códigos de producto para procesar
-const productCodes = [
-  "ACCFANPCCPLDEX4",
-  "MBGBH610MKD4",
-  "MBMXB760M-F",
-  "ME16KF436C18BB2",
-  "TBLENZAC50084PE",
-];
+// Configuración - Rutas de archivos
+const inputPath = "./output/productos_refinados.xlsx";
+const outputPath = "./output/productos_con_imagenes.xlsx";
 
 // Función principal
 async function main() {
   try {
-    // Primero hacer una prueba con un solo producto
+    // Hacer una prueba rápida con un código para verificar conexión
+    console.log("Realizando prueba de conexión...");
     await testSingleProduct("ACCFANPCCPLDEX4");
 
-    console.log("\n\nIniciando procesamiento de todos los productos...");
-    const results = await processProductCodes(productCodes);
-
-    // Guardar resultados en Excel
-    saveToExcel(results);
-
-    console.log("Proceso completado con éxito.");
+    // Procesar todos los productos refinados
+    console.log("\nIniciando procesamiento completo...");
+    await processRefinedProducts(inputPath, outputPath);
   } catch (error) {
     console.error("Error en el proceso:", error);
   }
 }
 
-// Ejecutar el script
-main().catch(console.error);
+// Verificar que exista la carpeta output
+const outputDir = "./output";
+if (!fs.existsSync(outputDir)) {
+  fs.mkdirSync(outputDir);
+}
+
+// Ejecutar si se llama directamente
+if (require.main === module) {
+  main().catch(console.error);
+}
+
+// Exportar funciones para usar como módulo
+module.exports = {
+  getProductImage,
+  constructDirectImageUrl,
+  processProductCodes,
+  saveToExcel,
+  testSingleProduct,
+  processRefinedProducts,
+};
