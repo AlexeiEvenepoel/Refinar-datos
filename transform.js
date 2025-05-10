@@ -219,7 +219,6 @@ async function processProducts(inputFilePath, outputDir) {
               Stock: stock,
               ProductCode: code,
               ImageUrl: imageInfo.imageUrl, // Nueva columna con URL de imagen
-              ImageTitle: imageInfo.imageTitle, // Título de la imagen
             });
           }
         } catch (err) {

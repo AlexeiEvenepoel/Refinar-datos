@@ -163,17 +163,16 @@ function readRefinedProducts(excelPath) {
 function saveProductsWithImages(products, imageMap, outputPath) {
   console.log("Generando archivo Excel con productos e imágenes...");
 
-  // Agregar las URLs de las imágenes a cada producto
+  // Agregar solo la URL de la imagen a cada producto (omitir ImageTitle)
   const productsWithImages = products.map((product) => {
     const imageInfo = imageMap.get(product.ProductCode) || {
       imageUrl: constructDirectImageUrl(product.ProductCode),
-      imageTitle: `Producto ${product.ProductCode}`,
     };
 
     return {
       ...product,
       ImageUrl: imageInfo.imageUrl,
-      ImageTitle: imageInfo.imageTitle,
+      // ImageTitle ya no se agrega
     };
   });
 
