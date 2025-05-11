@@ -475,7 +475,7 @@ const args = process.argv.slice(2);
 const mode = args[0];
 
 // Definir la ruta del archivo CSV de entrada
-const inputFile = "./csv/DCW_20250510022958.csv";
+const inputFile = "./csv/DCW_20250508062928.csv";
 
 // Asegurar que existe la carpeta output
 const outputDir = "./output";
