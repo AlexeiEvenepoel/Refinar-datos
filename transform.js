@@ -56,47 +56,6 @@ function generateDescription(productInfo) {
 }
 
 /**
- * Obtiene descripciones y especificaciones para un conjunto de códigos de producto
- * @param {string[]} productCodes - Lista de códigos de producto
- * @returns {Map} - Mapa con las descripciones y especificaciones
- */
-async function getDescriptionsForProducts(productCodes) {
-  console.log(
-    `Obteniendo descripciones para ${productCodes.length} productos...`
-  );
-  const descriptionMap = new Map();
-
-  for (let i = 0; i < productCodes.length; i++) {
-    const code = productCodes[i];
-    console.log(
-      `Procesando descripción ${i + 1}/${productCodes.length}: ${code}`
-    );
-
-    try {
-      const result = await getProductDescriptionAndSpecs(code);
-      descriptionMap.set(code, result);
-
-      // Mostrar vista previa de la información obtenida
-      const preview = result.description.substring(0, 50).replace(/\n/g, " ");
-      console.log(`- Descripción obtenida: ${preview}...`);
-      console.log(`- Especificaciones: ${result.hasSpecs ? "Sí" : "No"}`);
-    } catch (error) {
-      console.error(
-        `Error obteniendo descripción para ${code}: ${error.message}`
-      );
-    }
-
-    // Esperar entre peticiones para no sobrecargar el servidor
-    if (i < productCodes.length - 1) {
-      const delay = 1000; // 1 segundo
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-  }
-
-  return descriptionMap;
-}
-
-/**
  * Procesa los productos y genera tres archivos Excel separados
  * @param {string} inputFilePath Ruta del archivo CSV de entrada
  * @param {string} outputDir Directorio de salida
@@ -180,10 +139,40 @@ async function processProducts(inputFilePath, outputDir) {
 
     // Obtener descripciones mediante scraping
     console.log("Obteniendo descripciones web para los productos...");
-    const descriptionsMap = await getDescriptionsForProducts(productCodes);
+
+    // Usar una función interna para manejar el proceso de obtener descripciones
+    // De esta forma aprovechamos el módulo description-scraper en lugar de reimplementar su lógica
+    const descriptionsMap = new Map();
+    for (let i = 0; i < productCodes.length; i++) {
+      const code = productCodes[i];
+      console.log(
+        `Procesando descripción ${i + 1}/${productCodes.length}: ${code}`
+      );
+
+      try {
+        const result = await getProductDescriptionAndSpecs(code);
+        descriptionsMap.set(code, result);
+
+        // Mostrar vista previa de la información obtenida
+        const preview = result.description.substring(0, 50).replace(/\n/g, " ");
+        console.log(`- Descripción obtenida: ${preview}...`);
+        console.log(`- Especificaciones: ${result.hasSpecs ? "Sí" : "No"}`);
+      } catch (error) {
+        console.error(
+          `Error obteniendo descripción para ${code}: ${error.message}`
+        );
+      }
+
+      // Esperar entre peticiones para no sobrecargar el servidor
+      if (i < productCodes.length - 1) {
+        const delay = 1000; // 1 segundo
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
 
     // También obtener imágenes
     console.log("Obteniendo imágenes para los productos...");
+    // Usamos la función de scraper.js directamente
     const imageResults = await processProductCodes(productCodes);
     const imageMap = new Map();
     for (const result of imageResults) {
@@ -321,6 +310,11 @@ async function processProducts(inputFilePath, outputDir) {
     );
     const categoriesOutputFile = `${outputDir}/categories.xlsx`;
     XLSX.writeFile(categoriesWorkbook, categoriesOutputFile);
+
+    // También guardar las especificaciones en un archivo separado para referencia
+    const specificationsOutputFile = `${outputDir}/especificaciones.xlsx`;
+    saveSpecificationsToExcel(descriptionsMap, specificationsOutputFile);
+
     console.log(`Procesados ${products.length} productos.`);
     console.log(`Archivo de productos guardado en: ${productsOutputFile}`);
     console.log(
@@ -329,9 +323,45 @@ async function processProducts(inputFilePath, outputDir) {
     console.log(
       `Archivo de categorías guardado en: ${categoriesOutputFile} (${categories.length} categorías únicas)`
     );
+    console.log(
+      `Archivo de especificaciones guardado en: ${specificationsOutputFile}`
+    );
   } catch (error) {
     console.error("Error:", error);
   }
+}
+
+/**
+ * Guarda las especificaciones en un archivo Excel separado
+ * @param {Map} descriptionsMap - Mapa con descripciones y especificaciones
+ * @param {string} outputPath - Ruta del archivo de salida
+ */
+function saveSpecificationsToExcel(descriptionsMap, outputPath) {
+  const specsArray = Array.from(descriptionsMap).map(([code, info]) => {
+    const specObj = {
+      ProductCode: code,
+      Description: info.rawDescription || "",
+    };
+
+    // Añadir cada categoría de especificación como columna
+    if (info.specs) {
+      Object.keys(info.specs).forEach((category) => {
+        const columnName = `Spec_${category
+          .replace(/\s+/g, "_")
+          .replace(/[^\w]/g, "")}`;
+        specObj[columnName] = info.specs[category].join("; ");
+      });
+    }
+
+    return specObj;
+  });
+
+  // Crear y guardar el archivo Excel
+  const workbook = XLSX.utils.book_new();
+  const worksheet = XLSX.utils.json_to_sheet(specsArray);
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Especificaciones");
+
+  XLSX.writeFile(workbook, outputPath);
 }
 
 /**
@@ -342,11 +372,11 @@ async function previewProduct(productCode) {
   console.log(`Probando con código: ${productCode}`);
 
   try {
-    // Obtener descripción mediante scraping
+    // Utilizamos directamente la función del módulo description-scraper.js
     console.log("Obteniendo información del producto mediante scraping...");
     const descriptionResult = await getProductDescriptionAndSpecs(productCode);
 
-    // Obtener imagen
+    // Utilizamos directamente la función del módulo scraper.js
     console.log("Obteniendo imagen para el producto...");
     const imageResult = await getProductImage(productCode);
 
