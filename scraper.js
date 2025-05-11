@@ -4,6 +4,18 @@ const XLSX = require("xlsx");
 const fs = require("fs");
 const path = require("path");
 
+// Inicializar como null y cargarlo dinámicamente después
+let pLimit = null;
+
+// Función para cargar p-limit dinámicamente
+async function loadPLimit() {
+  if (!pLimit) {
+    const module = await import("p-limit");
+    pLimit = module.default;
+  }
+  return pLimit;
+}
+
 /**
  * Obtiene la URL de la imagen del producto directamente de la página de imagen extendida
  * @param {string} productCode - Código del producto (ej: ACTE70207W)
@@ -103,30 +115,85 @@ function constructDirectImageUrl(productCode) {
 }
 
 /**
- * Procesa un array de códigos de productos
+ * Sistema de reintentos para peticiones
+ * @param {string} code - Código de producto
+ * @param {Function} fetchFn - Función a ejecutar
+ * @param {number} retryCount - Contador de reintentos
+ * @returns {Promise<any>} - Resultado de la función
+ */
+const getWithRetry = async (code, fetchFn, retryCount = 0) => {
+  try {
+    return await fetchFn(code);
+  } catch (error) {
+    const maxRetries = 3;
+    if (retryCount < maxRetries) {
+      const waitTime = Math.pow(2, retryCount) * 1000; // Espera exponencial
+      console.log(`Reintentando ${code} en ${waitTime / 1000} segundos...`);
+      await new Promise((resolve) => setTimeout(resolve, waitTime));
+      return getWithRetry(code, fetchFn, retryCount + 1);
+    }
+    throw error;
+  }
+};
+
+/**
+ * Procesa un array de códigos de productos en paralelo con límite de concurrencia
  * @param {string[]} productCodes - Códigos de productos a procesar
+ * @param {number} concurrencyLevel - Nivel de concurrencia (peticiones simultáneas)
  * @returns {Promise<Array>} - Array con resultados
  */
-async function processProductCodes(productCodes) {
-  console.log(`Procesando ${productCodes.length} productos...`);
+async function processProductCodes(productCodes, concurrencyLevel = 10) {
+  console.log(
+    `Procesando ${productCodes.length} productos con concurrencia ${concurrencyLevel}...`
+  );
+
+  // Cargar p-limit al inicio de la función
+  const pLimit = await loadPLimit();
+  const limit = pLimit(concurrencyLevel);
+
+  // Dividir en lotes para mostrar progreso
+  const batchSize = 20;
+  const batches = [];
+  for (let i = 0; i < productCodes.length; i += batchSize) {
+    batches.push(productCodes.slice(i, i + batchSize));
+  }
+
   const results = [];
+  let processedCount = 0;
 
-  // Procesar cada producto con un pequeño delay para evitar sobrecarga
-  for (let i = 0; i < productCodes.length; i++) {
-    const code = productCodes[i];
-    console.log(`Procesando producto ${i + 1}/${productCodes.length}: ${code}`);
+  // Procesar por lotes para mejor control de progreso
+  for (const [batchIndex, batch] of batches.entries()) {
+    console.log(
+      `Procesando lote de imágenes ${batchIndex + 1}/${batches.length}...`
+    );
 
-    const result = await getProductImage(code);
-    results.push(result);
+    const promises = batch.map((code) =>
+      limit(async () => {
+        try {
+          processedCount++;
+          console.log(
+            `[${processedCount}/${productCodes.length}] Obteniendo imagen: ${code}`
+          );
 
-    console.log(`- Título: ${result.imageTitle}`);
-    console.log(`- URL de imagen: ${result.imageUrl}`);
-    console.log("------------------------");
+          const result = await getWithRetry(code, getProductImage);
+          console.log(
+            `- URL de imagen: ${result.imageUrl.substring(0, 50)}...`
+          );
 
-    // Esperar entre peticiones para no sobrecargar el servidor
-    if (i < productCodes.length - 1) {
-      await new Promise((resolve) => setTimeout(resolve, 1000)); // 1 segundo entre peticiones
-    }
+          return result;
+        } catch (error) {
+          console.error(`Error con ${code}: ${error.message}`);
+          return {
+            productCode: code,
+            imageUrl: constructDirectImageUrl(code),
+            imageTitle: `Error: ${code}`,
+          };
+        }
+      })
+    );
+
+    const batchResults = await Promise.all(promises);
+    results.push(...batchResults);
   }
 
   return results;
@@ -191,10 +258,30 @@ function saveProductsWithImages(products, imageMap, outputPath) {
  * Función principal que procesa los productos refinados y agrega las URLs de las imágenes
  * @param {string} refinedProductsPath - Ruta al archivo Excel con productos refinados
  * @param {string} outputPath - Ruta donde guardar el nuevo archivo
+ * @param {Object} options - Opciones de procesamiento
  */
-async function processRefinedProducts(refinedProductsPath, outputPath) {
+async function processRefinedProducts(
+  refinedProductsPath,
+  outputPath,
+  options = {}
+) {
   try {
     console.log("Iniciando procesamiento de productos refinados...");
+    const concurrencyLevel = options.concurrency || 10;
+    console.log(
+      `Nivel de concurrencia: ${concurrencyLevel} peticiones simultáneas`
+    );
+
+    // Verificar que el archivo de entrada existe
+    if (!fs.existsSync(refinedProductsPath)) {
+      throw new Error(`Archivo no encontrado: ${refinedProductsPath}`);
+    }
+
+    // Asegurar que el directorio de salida existe
+    const outputDir = path.dirname(outputPath);
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
 
     // Leer productos refinados
     const products = readRefinedProducts(refinedProductsPath);
@@ -212,9 +299,12 @@ async function processRefinedProducts(refinedProductsPath, outputPath) {
       `Se han identificado ${productCodes.length} códigos de productos.`
     );
 
-    // Procesar códigos para obtener imágenes
+    // Procesar códigos para obtener imágenes con concurrencia
     console.log("Obteniendo imágenes para los productos...");
-    const imageResults = await processProductCodes(productCodes);
+    const imageResults = await processProductCodes(
+      productCodes,
+      concurrencyLevel
+    );
 
     // Crear mapa de imágenes para acceso rápido
     const imageMap = new Map();
@@ -238,6 +328,7 @@ async function processRefinedProducts(refinedProductsPath, outputPath) {
     console.log("Proceso completado con éxito.");
   } catch (error) {
     console.error("Error en el proceso:", error);
+    throw error; // Re-lanzar para manejo superior
   }
 }
 
@@ -270,6 +361,74 @@ async function testSingleProduct(code) {
   console.log(`- URL de imagen: ${result.imageUrl}`);
 }
 
+/**
+ * Determina el mejor nivel de concurrencia para imágenes
+ * @param {number} minConcurrency - Mínima concurrencia a probar
+ * @param {number} maxConcurrency - Máxima concurrencia a probar
+ * @returns {Promise<number>} - Nivel óptimo de concurrencia
+ */
+async function testImageConcurrencySpeed(
+  minConcurrency = 2,
+  maxConcurrency = 20
+) {
+  console.log(
+    `Probando velocidad óptima de concurrencia para imágenes (${minConcurrency}-${maxConcurrency})...`
+  );
+
+  // Cargar p-limit
+  const pLimit = await loadPLimit();
+
+  const results = [];
+  const testCodes = [
+    "ACTE70207W",
+    "ACCFANPCCPLDEX4",
+    "ZZTE8080",
+    "ACOL50962W",
+    "ACTE54705W",
+  ];
+
+  for (
+    let concurrency = minConcurrency;
+    concurrency <= maxConcurrency;
+    concurrency += 2
+  ) {
+    console.log(`Probando concurrencia ${concurrency}...`);
+
+    const limit = pLimit(concurrency);
+    const startTime = Date.now();
+
+    const promises = testCodes.map((code) =>
+      limit(() => getProductImage(code))
+    );
+
+    await Promise.all(promises);
+
+    const endTime = Date.now();
+    const totalTime = endTime - startTime;
+    const average = totalTime / testCodes.length;
+
+    console.log(
+      `Concurrencia ${concurrency}: ${average.toFixed(2)}ms por petición`
+    );
+
+    results.push({ concurrency, totalTime, average });
+  }
+
+  // Encontrar la concurrencia óptima (menor tiempo promedio)
+  results.sort((a, b) => a.average - b.average);
+  const optimal = results[0].concurrency;
+
+  console.log("\nResultados de las pruebas:");
+  results.forEach((r) =>
+    console.log(
+      `Concurrencia ${r.concurrency}: ${r.average.toFixed(2)}ms por petición`
+    )
+  );
+  console.log(`\nNivel de concurrencia óptimo: ${optimal}`);
+
+  return optimal;
+}
+
 // Configuración - Rutas de archivos
 const inputPath = "./output/productos_refinados.xlsx";
 const outputPath = "./output/productos_con_imagenes.xlsx";
@@ -277,13 +436,38 @@ const outputPath = "./output/productos_con_imagenes.xlsx";
 // Función principal
 async function main() {
   try {
-    // Hacer una prueba rápida con un código para verificar conexión
-    console.log("Realizando prueba de conexión...");
-    await testSingleProduct("ACCFANPCCPLDEX4");
+    const args = process.argv.slice(2);
+    const mode = args[0] || "standard";
+    const concurrencyArg = args[1];
 
-    // Procesar todos los productos refinados
-    console.log("\nIniciando procesamiento completo...");
-    await processRefinedProducts(inputPath, outputPath);
+    if (mode === "test-speed") {
+      // Modo prueba de velocidad para imágenes
+      console.log(
+        "MODO PRUEBA DE VELOCIDAD: Determinando concurrencia óptima para imágenes..."
+      );
+      const optimalConcurrency = await testImageConcurrencySpeed();
+      console.log(
+        `Recomendación: Usa node scraper.js full ${optimalConcurrency}`
+      );
+    } else if (mode === "test") {
+      // Hacer una prueba rápida con un código para verificar conexión
+      console.log("MODO PRUEBA: Realizando prueba de conexión...");
+      await testSingleProduct("ACCFANPCCPLDEX4");
+    } else if (mode === "full") {
+      // Procesamiento completo con concurrencia específica
+      const concurrency = concurrencyArg ? parseInt(concurrencyArg) : 10;
+      console.log(
+        `MODO COMPLETO: Iniciando procesamiento con concurrencia ${concurrency}...`
+      );
+      await processRefinedProducts(inputPath, outputPath, { concurrency });
+    } else {
+      // Modo estándar
+      console.log(
+        "MODO ESTÁNDAR: Iniciando procesamiento con concurrencia predeterminada..."
+      );
+      await processRefinedProducts(inputPath, outputPath, { concurrency: 10 });
+    }
+    console.log("Proceso completado!");
   } catch (error) {
     console.error("Error en el proceso:", error);
   }
@@ -308,4 +492,6 @@ module.exports = {
   saveToExcel,
   testSingleProduct,
   processRefinedProducts,
+  loadPLimit,
+  testImageConcurrencySpeed, // Añade esta función a las exportaciones
 };

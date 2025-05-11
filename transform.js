@@ -3,6 +3,18 @@ const fs = require("fs");
 const { getProductImage, processProductCodes } = require("./scraper");
 const { getProductDescriptionAndSpecs } = require("./description-scraper");
 
+// Inicializar como null y cargarlo dinámicamente después
+let pLimit = null;
+
+// Función para cargar p-limit dinámicamente
+async function loadPLimit() {
+  if (!pLimit) {
+    const module = await import("p-limit");
+    pLimit = module.default;
+  }
+  return pLimit;
+}
+
 /**
  * Genera una descripción para el producto basada en su información (plantilla de respaldo)
  * @param {Object} productInfo Información del producto
@@ -105,18 +117,46 @@ function capitalizeFirstLetter(string) {
  * Procesa los productos y genera tres archivos Excel separados
  * @param {string} inputFilePath Ruta del archivo CSV de entrada
  * @param {string} outputDir Directorio de salida
+ * @param {Object} options Opciones de procesamiento
  */
-async function processProducts(inputFilePath, outputDir) {
+async function processProducts(inputFilePath, outputDir, options = {}) {
   try {
     console.log("Iniciando procesamiento de datos...");
+    const concurrencyLevel = options.concurrency || 5;
+    console.log(
+      `Nivel de concurrencia: ${concurrencyLevel} peticiones simultáneas`
+    );
 
-    // Leer el archivo
-    const workbook = XLSX.readFile(inputFilePath);
+    // Cargar p-limit al inicio de la función
+    const pLimit = await loadPLimit();
+
+    // Opciones específicas para archivo CSV no estándar
+    const workbook = XLSX.readFile(inputFilePath, {
+      type: "string",
+      raw: true,
+      cellDates: true,
+      codepage: 65001, // UTF-8
+      dateNF: "yyyy-mm-dd",
+      strip: false,
+      blankrows: false,
+    });
+
     const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+
     const rawData = XLSX.utils.sheet_to_json(worksheet, {
       header: 1,
-      defval: null,
+      defval: "",
+      raw: true,
+      blankrows: false,
     });
+
+    console.log(`Filas leídas en CSV: ${rawData.length}`);
+
+    // Para diagnóstico, mostrar las primeras 10 filas
+    console.log("Muestra de las primeras filas del CSV:");
+    for (let i = 0; i < Math.min(10, rawData.length); i++) {
+      console.log(`Fila ${i}: ${JSON.stringify(rawData[i])}`);
+    }
 
     let currentCategory = "";
     const products = [];
@@ -129,23 +169,44 @@ async function processProducts(inputFilePath, outputDir) {
 
     console.log("Extrayendo información básica y códigos de producto...");
 
+    // Encontrar la fila donde comienza la información de productos
+    let startRow = 0;
+
+    // Buscar la línea que contiene "CODIGO" que marca el inicio de datos
+    for (let i = 0; i < rawData.length; i++) {
+      if (
+        rawData[i] &&
+        rawData[i][1] &&
+        rawData[i][1].toString().includes("CODIGO")
+      ) {
+        startRow = i;
+        break;
+      }
+    }
+
+    console.log(`Fila de inicio de datos encontrada: ${startRow}`);
+
     // Primera pasada: extraer todos los datos básicos y los códigos de producto
-    for (const row of rawData) {
-      // Filtrar filas vacías o no relevantes
-      if (!row || row.length < 3 || !row[0]) continue;
+    for (let i = startRow; i < rawData.length; i++) {
+      const row = rawData[i];
+
+      // Saltarse filas vacías
+      if (!row || row.length < 3) continue;
 
       // Ignorar líneas divisorias o de formato
       if (
-        row[0].toString().includes("_______________") ||
-        row[0].toString().includes("__________________________________")
+        row[0] &&
+        (row[0].toString().includes("_______________") ||
+          row[0].toString().includes("__________________________________"))
       ) {
         continue;
       }
 
-      // Detectar líneas de categoría
+      // Detectar líneas de categoría (encabezados de grupo)
       if (row[1] && row[1].toString().includes("CODIGO")) {
         if (row[2] && typeof row[2] === "string") {
           currentCategory = row[2].trim();
+          console.log(`  > Nueva categoría detectada: ${currentCategory}`);
           if (!categoriesMap.has(currentCategory)) {
             categoriesMap.set(currentCategory, categoriesMap.size + 1);
           }
@@ -155,17 +216,41 @@ async function processProducts(inputFilePath, outputDir) {
 
       // Si es una fila de producto, extraer el código
       if (currentCategory && row[1] && !row[1].toString().includes("CODIGO")) {
-        const code = row[1] ? row[1].toString().trim() : "";
+        // Limpiar el código de comillas si las tiene
+        let code = row[1]
+          ? row[1]
+              .toString()
+              .replace(/^"(.*)"$/, "$1")
+              .trim()
+          : "";
+
         if (code) {
           productCodes.push(code);
 
           // Guardar información para descripción de respaldo
-          const fullTitle = row[2] ? row[2].toString() : "Producto sin nombre";
-          const brand = row[8] ? row[8].toString().trim() : "Sin marca";
+          const fullTitle = row[2]
+            ? row[2].toString().replace(/^"(.*)"$/, "$1")
+            : "Producto sin nombre";
+          const brand = row[8]
+            ? row[8]
+                .toString()
+                .replace(/^"(.*)"$/, "$1")
+                .trim()
+            : "Sin marca";
+
+          // Manejar diferentes formatos de stock
           const rawStock = row[3] ? row[3].toString().trim() : "0";
-          const stock = rawStock.startsWith(">")
-            ? parseInt(rawStock.substring(1)) || 0
-            : parseInt(rawStock) || 0;
+          let stock = 0;
+
+          if (rawStock.startsWith(">")) {
+            stock = parseInt(rawStock.substring(1)) || 0;
+          } else {
+            stock = parseInt(rawStock) || 0;
+          }
+
+          if (!brandsMap.has(brand)) {
+            brandsMap.set(brand, brandsMap.size + 1);
+          }
 
           productInfoMap.set(code, {
             title: fullTitle.split("[@@@]")[0].trim(),
@@ -183,72 +268,147 @@ async function processProducts(inputFilePath, outputDir) {
       `Se han identificado ${productCodes.length} códigos de productos.`
     );
 
-    // Obtener descripciones mediante scraping
-    console.log("Obteniendo descripciones web para los productos...");
+    // Cache para guardar resultados ya obtenidos
+    const cache = new Map();
 
-    // Usar una función interna para manejar el proceso de obtener descripciones
-    const descriptionsMap = new Map();
-    for (let i = 0; i < productCodes.length; i++) {
-      const code = productCodes[i];
-      console.log(
-        `Procesando descripción ${i + 1}/${productCodes.length}: ${code}`
-      );
-
+    // Sistema de reintentos
+    const maxRetries = 3;
+    const getWithRetry = async (code, retriesFn, retryCount = 0) => {
       try {
-        const result = await getProductDescriptionAndSpecs(code);
-
-        // MODIFICACIÓN: Formateamos la descripción para que tenga el formato deseado
-        if (
-          result.rawDescription &&
-          result.specs &&
-          Object.keys(result.specs).length > 0
-        ) {
-          // Si hay descripción y especificaciones, crear formato limpio
-          result.description =
-            result.rawDescription + formatSpecifications(result.specs);
+        // Verificar caché primero
+        if (cache.has(code)) {
+          return cache.get(code);
         }
 
-        descriptionsMap.set(code, result);
+        const result = await retriesFn(code);
 
-        // Mostrar vista previa de la información obtenida
-        const preview = result.description.substring(0, 50).replace(/\n/g, " ");
-        console.log(`- Descripción obtenida: ${preview}...`);
-        console.log(`- Especificaciones: ${result.hasSpecs ? "Sí" : "No"}`);
+        // Guardar en caché
+        cache.set(code, result);
+        return result;
       } catch (error) {
-        console.error(
-          `Error obteniendo descripción para ${code}: ${error.message}`
-        );
+        if (retryCount < maxRetries) {
+          const waitTime = Math.pow(2, retryCount) * 1000; // Espera exponencial
+          console.log(`Reintentando ${code} en ${waitTime / 1000} segundos...`);
+          await new Promise((resolve) => setTimeout(resolve, waitTime));
+          return getWithRetry(code, retriesFn, retryCount + 1);
+        }
+        throw error;
       }
+    };
 
-      // Esperar entre peticiones para no sobrecargar el servidor
-      if (i < productCodes.length - 1) {
-        const delay = 1000; // 1 segundo
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
+    // Obtener descripciones mediante scraping en paralelo con control de concurrencia
+    console.log("Obteniendo descripciones web para los productos...");
+    console.log(
+      `Procesamiento en paralelo con ${concurrencyLevel} peticiones simultáneas`
+    );
+
+    const limit = pLimit(concurrencyLevel);
+    const descriptionsMap = new Map();
+
+    // Dividir en lotes para mostrar progreso
+    const batchSize = 10;
+    const batches = [];
+    for (let i = 0; i < productCodes.length; i += batchSize) {
+      batches.push(productCodes.slice(i, i + batchSize));
     }
 
-    // También obtener imágenes
-    console.log("Obteniendo imágenes para los productos...");
-    // Usamos la función de scraper.js directamente
-    const imageResults = await processProductCodes(productCodes);
+    let processedCount = 0;
+
+    // Procesar por lotes para mejor control de progreso
+    for (const [batchIndex, batch] of batches.entries()) {
+      console.log(`Procesando lote ${batchIndex + 1}/${batches.length}...`);
+
+      const promises = batch.map((code) =>
+        limit(async () => {
+          try {
+            processedCount++;
+            console.log(
+              `[${processedCount}/${productCodes.length}] Procesando: ${code}`
+            );
+
+            const result = await getWithRetry(
+              code,
+              getProductDescriptionAndSpecs
+            );
+
+            // Formatear descripción
+            if (
+              result.rawDescription &&
+              result.specs &&
+              Object.keys(result.specs).length > 0
+            ) {
+              result.description =
+                result.rawDescription + formatSpecifications(result.specs);
+            }
+
+            descriptionsMap.set(code, result);
+
+            // Mostrar vista previa
+            const preview = result.description
+              .substring(0, 30)
+              .replace(/\n/g, " ");
+            console.log(
+              `- ${code}: ${preview}... (Specs: ${
+                result.hasSpecs ? "Sí" : "No"
+              })`
+            );
+
+            return { code, success: true };
+          } catch (error) {
+            console.error(`Error con ${code}: ${error.message}`);
+            return { code, success: false, error: error.message };
+          }
+        })
+      );
+
+      await Promise.all(promises);
+    }
+
+    // Inicializar imageMap independientemente de si se procesan imágenes o no
     const imageMap = new Map();
-    for (const result of imageResults) {
-      imageMap.set(result.productCode, {
-        imageUrl: result.imageUrl,
-        imageTitle: result.imageTitle,
-      });
+
+    // Obtener imágenes (solo si no se especifica skipImageProcessing)
+    if (!options.skipImageProcessing) {
+      console.log("Obteniendo imágenes para los productos...");
+
+      // Usar un nivel de concurrencia posiblemente mayor para imágenes
+      const imageLimit = pLimit(concurrencyLevel + 2);
+      const imagePromises = productCodes.map((code) =>
+        imageLimit(() => getWithRetry(code, getProductImage))
+      );
+
+      const imageResults = await Promise.all(imagePromises);
+      for (const result of imageResults) {
+        imageMap.set(result.productCode, {
+          imageUrl: result.imageUrl,
+          imageTitle: result.imageTitle,
+        });
+      }
+    } else {
+      console.log(
+        "Saltando procesamiento de imágenes (se procesarán en una fase posterior)"
+      );
+      // Dejar imageMap con URLs de placeholder
+      for (const code of productCodes) {
+        imageMap.set(code, {
+          imageUrl: "", // Placeholder vacío
+          imageTitle: `Producto ${code}`,
+        });
+      }
     }
 
-    // Reiniciar para la segunda pasada
+    // Segunda pasada: procesar todos los datos con imágenes y descripciones
+    console.log("Procesando productos completos...");
     currentCategory = "";
 
-    // Segunda pasada: procesar todos los datos con las imágenes y descripciones
-    for (const row of rawData) {
-      if (!row || row.length < 3 || !row[0]) continue;
+    for (let i = startRow; i < rawData.length; i++) {
+      const row = rawData[i];
+      if (!row || row.length < 3) continue;
 
       if (
-        row[0].toString().includes("_______________") ||
-        row[0].toString().includes("__________________________________")
+        row[0] &&
+        (row[0].toString().includes("_______________") ||
+          row[0].toString().includes("__________________________________"))
       ) {
         continue;
       }
@@ -262,25 +422,35 @@ async function processProducts(inputFilePath, outputDir) {
 
       if (currentCategory && row[1] && !row[1].toString().includes("CODIGO")) {
         try {
+          const code = row[1]
+            ? row[1]
+                .toString()
+                .replace(/^"(.*)"$/, "$1")
+                .trim()
+            : "";
+          if (!code) continue;
+
           const rawStock = row[3] ? row[3].toString().trim() : "0";
           const stock = rawStock.startsWith(">")
             ? parseInt(rawStock.substring(1)) || 0
             : parseInt(rawStock) || 0;
 
-          const fullTitle = row[2] ? row[2].toString() : "Producto sin nombre";
+          const fullTitle = row[2]
+            ? row[2].toString().replace(/^"(.*)"$/, "$1")
+            : "Producto sin nombre";
           const cleanTitle = fullTitle.split("[@@@]")[0].trim();
-          const code = row[1] ? row[1].toString().trim() : "";
 
           let price = 0;
           if (row[4] && row[4].toString().trim() !== "") {
             price = parseFloat(row[4].toString().replace(",", ".")) || 0;
           }
 
-          const brand = row[8] ? row[8].toString().trim() : "Sin marca";
-
-          if (!brandsMap.has(brand)) {
-            brandsMap.set(brand, brandsMap.size + 1);
-          }
+          const brand = row[8]
+            ? row[8]
+                .toString()
+                .replace(/^"(.*)"$/, "$1")
+                .trim()
+            : "Sin marca";
 
           if (cleanTitle && cleanTitle !== "" && price > 0) {
             // Obtener imagen
@@ -323,7 +493,7 @@ async function processProducts(inputFilePath, outputDir) {
             });
           }
         } catch (err) {
-          console.warn(`Error procesando fila: ${row.join(", ")}`);
+          console.warn(`Error procesando fila: ${err.message}`);
         }
       }
     }
@@ -368,7 +538,6 @@ async function processProducts(inputFilePath, outputDir) {
     const categoriesOutputFile = `${outputDir}/categories.xlsx`;
     XLSX.writeFile(categoriesWorkbook, categoriesOutputFile);
 
-    console.log(`Procesados ${products.length} productos.`);
     console.log(`Archivo de productos guardado en: ${productsOutputFile}`);
     console.log(
       `Archivo de marcas guardado en: ${brandsOutputFile} (${brands.length} marcas únicas)`
@@ -378,6 +547,7 @@ async function processProducts(inputFilePath, outputDir) {
     );
   } catch (error) {
     console.error("Error:", error);
+    throw error; // Re-lanzar el error para que se propague
   }
 }
 
@@ -470,33 +640,113 @@ async function previewProduct(productCode) {
   }
 }
 
-// Modificar la parte de ejecución para soportar el modo de vista previa
-const args = process.argv.slice(2);
-const mode = args[0];
+/**
+ * Determina el mejor nivel de concurrencia para el entorno actual
+ * @param {number} minConcurrency Mínima concurrencia a probar
+ * @param {number} maxConcurrency Máxima concurrencia a probar
+ * @param {string} sampleCode Código de producto para pruebas
+ * @returns {Promise<number>} Nivel óptimo de concurrencia
+ */
+async function testConcurrencySpeed(
+  minConcurrency = 2,
+  maxConcurrency = 15,
+  sampleCode = "ACTE70207W"
+) {
+  console.log(
+    `Probando velocidad óptima de concurrencia (${minConcurrency}-${maxConcurrency})...`
+  );
 
-// Definir la ruta del archivo CSV de entrada
-const inputFile = "./csv/DCW_20250508062928.csv";
+  // Cargar p-limit al inicio de la función
+  const pLimit = await loadPLimit();
 
-// Asegurar que existe la carpeta output
-const outputDir = "./output";
-if (!fs.existsSync(outputDir)) {
-  fs.mkdirSync(outputDir);
+  const results = [];
+  const numRequests = 10;
+
+  for (
+    let concurrency = minConcurrency;
+    concurrency <= maxConcurrency;
+    concurrency++
+  ) {
+    console.log(`Probando nivel de concurrencia: ${concurrency}`);
+    const start = Date.now();
+
+    const limit = pLimit(concurrency);
+    const promises = Array(numRequests)
+      .fill()
+      .map(() => limit(() => getProductDescriptionAndSpecs(sampleCode)));
+
+    await Promise.all(promises);
+    const elapsed = Date.now() - start;
+    const average = elapsed / numRequests;
+
+    console.log(
+      `Tiempo promedio por petición: ${average.toFixed(
+        2
+      )}ms (concurrencia ${concurrency})`
+    );
+    results.push({ concurrency, average });
+
+    // Esperar un poco entre pruebas
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+
+  // Encontrar el nivel de concurrencia más rápido
+  results.sort((a, b) => a.average - b.average);
+  const optimal = results[0].concurrency;
+
+  console.log("Resultados de la prueba de velocidad:");
+  results.forEach((r) =>
+    console.log(
+      `Concurrencia ${r.concurrency}: ${r.average.toFixed(2)}ms por petición`
+    )
+  );
+  console.log(`\nNivel de concurrencia óptimo: ${optimal}`);
+
+  return optimal;
 }
 
-// Ejecutar según el modo
-(async () => {
-  try {
-    if (mode && mode !== "full") {
-      // Modo vista previa: mostrar información de un producto específico
-      console.log(`MODO PRODUCTO ESPECÍFICO: Probando con código ${mode}...`);
-      await previewProduct(mode);
-    } else {
-      // Modo completo: procesar todos los productos
-      console.log("MODO COMPLETO: Iniciando proceso de transformación...");
-      await processProducts(inputFile, outputDir);
-      console.log("Proceso completado!");
+// Exportar las funciones necesarias
+module.exports = {
+  processProducts,
+  previewProduct,
+  testConcurrencySpeed,
+  generateDescription,
+  formatSpecifications,
+};
+
+// Ejecutar según el modo (solo si se llama directamente)
+if (require.main === module) {
+  (async () => {
+    try {
+      if (mode === "test-speed") {
+        // Modo prueba de velocidad: determina la concurrencia óptima
+        console.log(
+          "MODO PRUEBA DE VELOCIDAD: Determinando concurrencia óptima..."
+        );
+        const optimalConcurrency = await testConcurrencySpeed();
+        console.log(
+          `Recomendación: Usa node transform.js full ${optimalConcurrency}`
+        );
+      } else if (mode === "full") {
+        // Modo completo con concurrencia opcional
+        const concurrency = concurrencyArg ? parseInt(concurrencyArg) : 5;
+        console.log(
+          `MODO COMPLETO: Iniciando proceso de transformación con concurrencia ${concurrency}...`
+        );
+        await processProducts(inputFile, outputDir, { concurrency });
+        console.log("Proceso completado!");
+      } else if (mode === "standard") {
+        // Modo estándar (completo con configuración predeterminada)
+        console.log("MODO ESTÁNDAR: Iniciando proceso de transformación...");
+        await processProducts(inputFile, outputDir, { concurrency: 5 });
+        console.log("Proceso completado!");
+      } else {
+        // Modo vista previa: mostrar información de un producto específico
+        console.log(`MODO PRODUCTO ESPECÍFICO: Probando con código ${mode}...`);
+        await previewProduct(mode);
+      }
+    } catch (error) {
+      console.error("Error en la ejecución:", error);
     }
-  } catch (error) {
-    console.error("Error en la ejecución:", error);
-  }
-})();
+  })();
+}
