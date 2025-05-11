@@ -320,7 +320,8 @@ async function processProducts(inputFilePath, outputDir) {
       "Categorias"
     );
     const categoriesOutputFile = `${outputDir}/categories.xlsx`;
-    XLSX.writeFile(categoriesWorkbook, categoriesOutputFile);    console.log(`Procesados ${products.length} productos.`);
+    XLSX.writeFile(categoriesWorkbook, categoriesOutputFile);
+    console.log(`Procesados ${products.length} productos.`);
     console.log(`Archivo de productos guardado en: ${productsOutputFile}`);
     console.log(
       `Archivo de marcas guardado en: ${brandsOutputFile} (${brands.length} marcas únicas)`
@@ -333,38 +334,7 @@ async function processProducts(inputFilePath, outputDir) {
   }
 }
 
-/**
- * Guarda las especificaciones en un archivo Excel separado
- * @param {Map} descriptionsMap - Mapa con descripciones y especificaciones
- * @param {string} outputPath - Ruta del archivo de salida
- */
-function saveSpecificationsToExcel(descriptionsMap, outputPath) {
-  const specsArray = Array.from(descriptionsMap).map(([code, info]) => {
-    const specObj = {
-      ProductCode: code,
-      Description: info.rawDescription || "",
-    };
-
-    // Añadir cada categoría de especificación como columna
-    if (info.specs) {
-      Object.keys(info.specs).forEach((category) => {
-        const columnName = `Spec_${category
-          .replace(/\s+/g, "_")
-          .replace(/[^\w]/g, "")}`;
-        specObj[columnName] = info.specs[category].join("; ");
-      });
-    }
-
-    return specObj;
-  });
-
-  // Crear y guardar el archivo Excel
-  const workbook = XLSX.utils.book_new();
-  const worksheet = XLSX.utils.json_to_sheet(specsArray);
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Especificaciones");
-
-  XLSX.writeFile(workbook, outputPath);
-}
+// Configuración
 
 // Configuración
 const inputFile = "csv/DCW_20250509062026.csv";
