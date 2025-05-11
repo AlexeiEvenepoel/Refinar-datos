@@ -334,21 +334,125 @@ async function processProducts(inputFilePath, outputDir) {
   }
 }
 
-// Configuración
+/**
+ * Muestra una vista previa en consola de la información para un producto específico
+ * @param {string} productCode - Código del producto a previsualizar
+ */
+async function previewProduct(productCode) {
+  console.log(`Probando con código: ${productCode}`);
 
-// Configuración
-const inputFile = "csv/DCW_20250509062026.csv";
-const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-const outputDir = "./output";
+  try {
+    // Obtener descripción mediante scraping
+    console.log("Obteniendo información del producto mediante scraping...");
+    const descriptionResult = await getProductDescriptionAndSpecs(productCode);
+
+    // Obtener imagen
+    console.log("Obteniendo imagen para el producto...");
+    const imageResult = await getProductImage(productCode);
+
+    // Mostrar los resultados en formato similar al Excel
+    console.log("\n==================================================");
+    console.log("      VISTA PREVIA DEL FORMATO DE EXCEL");
+    console.log("==================================================\n");
+
+    // Información básica
+    console.log("ProductCode:", productCode);
+    console.log("ImageUrl:", imageResult.imageUrl || "No disponible");
+
+    // Verificar si la descripción se obtuvo correctamente
+    if (
+      descriptionResult.description !==
+        `No se pudo obtener la información para ${productCode}.` &&
+      descriptionResult.description !== "Error al procesar la solicitud."
+    ) {
+      // Mostrar solamente la descripción original limpia, no todas las especificaciones
+      console.log("\nDescription:");
+      console.log(
+        descriptionResult.rawDescription || descriptionResult.description
+      );
+
+      // Mostrar solo las especificaciones técnicas en formato limpio
+      if (descriptionResult.hasSpecs) {
+        console.log("\nESPECIFICACIONES TÉCNICAS:");
+
+        // Procesar categorías para eliminar duplicidades
+        const processedCategories = new Set();
+
+        // Ignorar la primera categoría que contiene todas las especificaciones juntas
+        const categories = Object.keys(descriptionResult.specs).filter(
+          (cat) =>
+            !cat.includes(
+              "DISPOSITIVOMARCAMODELONUMERO DE PARTECARACTERISTICAS"
+            )
+        );
+
+        // Procesar cada categoría individualmente
+        categories.forEach((category) => {
+          if (
+            !processedCategories.has(category) &&
+            descriptionResult.specs[category].length > 0
+          ) {
+            processedCategories.add(category);
+
+            console.log(`\n${category}:`);
+
+            // Filtrar especificaciones duplicadas usando Set
+            const uniqueSpecs = [...new Set(descriptionResult.specs[category])];
+            uniqueSpecs.forEach((spec) => {
+              console.log(`  - ${spec}`);
+            });
+          }
+        });
+      }
+    } else {
+      console.log(
+        "\nNo se encontró descripción en la web. Se generaría una descripción mediante plantilla."
+      );
+      console.log(
+        "Para generar una descripción completa, se requeriría información adicional del producto."
+      );
+    }
+
+    console.log("\n==================================================");
+    console.log(
+      "Esta información se guardará en el archivo Excel de productos."
+    );
+    console.log("==================================================");
+  } catch (error) {
+    console.error(
+      `Error al obtener vista previa del producto ${productCode}:`,
+      error.message
+    );
+  }
+}
+
+// Modificar la parte de ejecución para soportar el modo de vista previa
+const args = process.argv.slice(2);
+const mode = args[0];
+
+// Definir la ruta del archivo CSV de entrada
+const inputFile = "./csv/DCW_20250510022958.csv";
 
 // Asegurar que existe la carpeta output
+const outputDir = "./output";
 if (!fs.existsSync(outputDir)) {
   fs.mkdirSync(outputDir);
 }
 
-// Ejecutar (ahora es async)
+// Ejecutar según el modo
 (async () => {
-  console.log("Iniciando proceso de transformación...");
-  await processProducts(inputFile, outputDir);
-  console.log("Proceso completado!");
+  try {
+    if (mode && mode !== "full") {
+      // Modo vista previa: mostrar información de un producto específico
+      console.log(`MODO PRODUCTO ESPECÍFICO: Probando con código ${mode}...`);
+      await previewProduct(mode);
+    } else {
+      // Modo completo: procesar todos los productos
+      console.log("MODO COMPLETO: Iniciando proceso de transformación...");
+      await processProducts(inputFile, outputDir);
+      console.log("Proceso completado!");
+    }
+  } catch (error) {
+    console.error("Error en la ejecución:", error);
+  }
 })();
