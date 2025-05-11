@@ -56,6 +56,46 @@ function generateDescription(productInfo) {
 }
 
 /**
+ * Formatea las especificaciones técnicas en un formato limpio y legible
+ * @param {Object} specs - Objeto con las especificaciones del producto
+ * @returns {string} - Texto formateado de especificaciones
+ */
+function formatSpecifications(specs) {
+  if (!specs || Object.keys(specs).length === 0) {
+    return "";
+  }
+
+  let formattedSpecs = "\n\nESPECIFICACIONES TÉCNICAS:\n";
+
+  // Procesar categorías para eliminar duplicidades
+  const processedCategories = new Set();
+
+  // Ignorar la primera categoría que contiene todas las especificaciones juntas
+  const categories = Object.keys(specs).filter(
+    (cat) =>
+      !cat.includes("DISPOSITIVOMARCAMODELONUMERO DE PARTECARACTERISTICAS")
+  );
+
+  // Procesar cada categoría individualmente
+  categories.forEach((category) => {
+    if (!processedCategories.has(category) && specs[category].length > 0) {
+      processedCategories.add(category);
+
+      formattedSpecs += `\n${category}:\n`;
+
+      // Filtrar especificaciones duplicadas usando Set
+      const uniqueSpecs = [...new Set(specs[category])];
+
+      uniqueSpecs.forEach((spec) => {
+        formattedSpecs += `  - ${spec}\n`;
+      });
+    }
+  });
+
+  return formattedSpecs;
+}
+
+/**
  * Procesa los productos y genera tres archivos Excel separados
  * @param {string} inputFilePath Ruta del archivo CSV de entrada
  * @param {string} outputDir Directorio de salida
@@ -141,7 +181,6 @@ async function processProducts(inputFilePath, outputDir) {
     console.log("Obteniendo descripciones web para los productos...");
 
     // Usar una función interna para manejar el proceso de obtener descripciones
-    // De esta forma aprovechamos el módulo description-scraper en lugar de reimplementar su lógica
     const descriptionsMap = new Map();
     for (let i = 0; i < productCodes.length; i++) {
       const code = productCodes[i];
@@ -151,6 +190,18 @@ async function processProducts(inputFilePath, outputDir) {
 
       try {
         const result = await getProductDescriptionAndSpecs(code);
+
+        // MODIFICACIÓN: Formateamos la descripción para que tenga el formato deseado
+        if (
+          result.rawDescription &&
+          result.specs &&
+          Object.keys(result.specs).length > 0
+        ) {
+          // Si hay descripción y especificaciones, crear formato limpio
+          result.description =
+            result.rawDescription + formatSpecifications(result.specs);
+        }
+
         descriptionsMap.set(code, result);
 
         // Mostrar vista previa de la información obtenida
@@ -311,10 +362,6 @@ async function processProducts(inputFilePath, outputDir) {
     const categoriesOutputFile = `${outputDir}/categories.xlsx`;
     XLSX.writeFile(categoriesWorkbook, categoriesOutputFile);
 
-    // También guardar las especificaciones en un archivo separado para referencia
-    const specificationsOutputFile = `${outputDir}/especificaciones.xlsx`;
-    saveSpecificationsToExcel(descriptionsMap, specificationsOutputFile);
-
     console.log(`Procesados ${products.length} productos.`);
     console.log(`Archivo de productos guardado en: ${productsOutputFile}`);
     console.log(
@@ -323,45 +370,9 @@ async function processProducts(inputFilePath, outputDir) {
     console.log(
       `Archivo de categorías guardado en: ${categoriesOutputFile} (${categories.length} categorías únicas)`
     );
-    console.log(
-      `Archivo de especificaciones guardado en: ${specificationsOutputFile}`
-    );
   } catch (error) {
     console.error("Error:", error);
   }
-}
-
-/**
- * Guarda las especificaciones en un archivo Excel separado
- * @param {Map} descriptionsMap - Mapa con descripciones y especificaciones
- * @param {string} outputPath - Ruta del archivo de salida
- */
-function saveSpecificationsToExcel(descriptionsMap, outputPath) {
-  const specsArray = Array.from(descriptionsMap).map(([code, info]) => {
-    const specObj = {
-      ProductCode: code,
-      Description: info.rawDescription || "",
-    };
-
-    // Añadir cada categoría de especificación como columna
-    if (info.specs) {
-      Object.keys(info.specs).forEach((category) => {
-        const columnName = `Spec_${category
-          .replace(/\s+/g, "_")
-          .replace(/[^\w]/g, "")}`;
-        specObj[columnName] = info.specs[category].join("; ");
-      });
-    }
-
-    return specObj;
-  });
-
-  // Crear y guardar el archivo Excel
-  const workbook = XLSX.utils.book_new();
-  const worksheet = XLSX.utils.json_to_sheet(specsArray);
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Especificaciones");
-
-  XLSX.writeFile(workbook, outputPath);
 }
 
 /**
@@ -395,13 +406,10 @@ async function previewProduct(productCode) {
         `No se pudo obtener la información para ${productCode}.` &&
       descriptionResult.description !== "Error al procesar la solicitud."
     ) {
-      // Mostrar solamente la descripción original limpia, no todas las especificaciones
+      // Mostrar descripción y especificaciones en formato limpio
       console.log("\nDescription:");
-      console.log(
-        descriptionResult.rawDescription || descriptionResult.description
-      );
+      console.log(descriptionResult.rawDescription);
 
-      // Mostrar solo las especificaciones técnicas en formato limpio
       if (descriptionResult.hasSpecs) {
         console.log("\nESPECIFICACIONES TÉCNICAS:");
 
