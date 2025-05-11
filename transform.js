@@ -1,9 +1,10 @@
 const XLSX = require("xlsx");
 const fs = require("fs");
-const { getProductImage, processProductCodes } = require("./scraper"); // Importamos las funciones del scraper
+const { getProductImage, processProductCodes } = require("./scraper");
+const { getProductDescriptionAndSpecs } = require("./description-scraper");
 
 /**
- * Genera una descripción para el producto basada en su información
+ * Genera una descripción para el producto basada en su información (plantilla de respaldo)
  * @param {Object} productInfo Información del producto
  * @returns {string} Descripción generada
  */
@@ -55,6 +56,47 @@ function generateDescription(productInfo) {
 }
 
 /**
+ * Obtiene descripciones y especificaciones para un conjunto de códigos de producto
+ * @param {string[]} productCodes - Lista de códigos de producto
+ * @returns {Map} - Mapa con las descripciones y especificaciones
+ */
+async function getDescriptionsForProducts(productCodes) {
+  console.log(
+    `Obteniendo descripciones para ${productCodes.length} productos...`
+  );
+  const descriptionMap = new Map();
+
+  for (let i = 0; i < productCodes.length; i++) {
+    const code = productCodes[i];
+    console.log(
+      `Procesando descripción ${i + 1}/${productCodes.length}: ${code}`
+    );
+
+    try {
+      const result = await getProductDescriptionAndSpecs(code);
+      descriptionMap.set(code, result);
+
+      // Mostrar vista previa de la información obtenida
+      const preview = result.description.substring(0, 50).replace(/\n/g, " ");
+      console.log(`- Descripción obtenida: ${preview}...`);
+      console.log(`- Especificaciones: ${result.hasSpecs ? "Sí" : "No"}`);
+    } catch (error) {
+      console.error(
+        `Error obteniendo descripción para ${code}: ${error.message}`
+      );
+    }
+
+    // Esperar entre peticiones para no sobrecargar el servidor
+    if (i < productCodes.length - 1) {
+      const delay = 1000; // 1 segundo
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+
+  return descriptionMap;
+}
+
+/**
  * Procesa los productos y genera tres archivos Excel separados
  * @param {string} inputFilePath Ruta del archivo CSV de entrada
  * @param {string} outputDir Directorio de salida
@@ -73,7 +115,8 @@ async function processProducts(inputFilePath, outputDir) {
 
     let currentCategory = "";
     const products = [];
-    const productCodes = []; // Para almacenar los códigos de productos
+    const productCodes = [];
+    const productInfoMap = new Map(); // Para almacenar información para generar descripciones
 
     // Mapas para mantener las marcas y categorías únicas
     const brandsMap = new Map();
@@ -94,12 +137,10 @@ async function processProducts(inputFilePath, outputDir) {
         continue;
       }
 
-      // Detectar líneas de categoría (contienen "CODIGO" en la segunda columna)
+      // Detectar líneas de categoría
       if (row[1] && row[1].toString().includes("CODIGO")) {
-        // Extraer la categoría de la tercera columna (índice 2)
         if (row[2] && typeof row[2] === "string") {
           currentCategory = row[2].trim();
-          // Añadir a mapa de categorías si no existe
           if (!categoriesMap.has(currentCategory)) {
             categoriesMap.set(currentCategory, categoriesMap.size + 1);
           }
@@ -112,6 +153,23 @@ async function processProducts(inputFilePath, outputDir) {
         const code = row[1] ? row[1].toString().trim() : "";
         if (code) {
           productCodes.push(code);
+
+          // Guardar información para descripción de respaldo
+          const fullTitle = row[2] ? row[2].toString() : "Producto sin nombre";
+          const brand = row[8] ? row[8].toString().trim() : "Sin marca";
+          const rawStock = row[3] ? row[3].toString().trim() : "0";
+          const stock = rawStock.startsWith(">")
+            ? parseInt(rawStock.substring(1)) || 0
+            : parseInt(rawStock) || 0;
+
+          productInfoMap.set(code, {
+            title: fullTitle.split("[@@@]")[0].trim(),
+            fullTitle: fullTitle,
+            category: currentCategory,
+            brand: brand,
+            stock: stock,
+            code: code,
+          });
         }
       }
     }
@@ -119,12 +177,14 @@ async function processProducts(inputFilePath, outputDir) {
     console.log(
       `Se han identificado ${productCodes.length} códigos de productos.`
     );
-    console.log("Obteniendo imágenes para todos los productos...");
 
-    // Llamamos al servicio del scraper para obtener todas las imágenes
+    // Obtener descripciones mediante scraping
+    console.log("Obteniendo descripciones web para los productos...");
+    const descriptionsMap = await getDescriptionsForProducts(productCodes);
+
+    // También obtener imágenes
+    console.log("Obteniendo imágenes para los productos...");
     const imageResults = await processProductCodes(productCodes);
-
-    // Convertir los resultados a un mapa para acceso fácil
     const imageMap = new Map();
     for (const result of imageResults) {
       imageMap.set(result.productCode, {
@@ -133,18 +193,13 @@ async function processProducts(inputFilePath, outputDir) {
       });
     }
 
-    console.log(`Se obtuvieron ${imageMap.size} imágenes de productos.`);
-    console.log("Procesando datos completos de productos...");
-
     // Reiniciar para la segunda pasada
     currentCategory = "";
 
-    // Segunda pasada: procesar todos los datos con las imágenes
+    // Segunda pasada: procesar todos los datos con las imágenes y descripciones
     for (const row of rawData) {
-      // Filtrar filas vacías o no relevantes
       if (!row || row.length < 3 || !row[0]) continue;
 
-      // Ignorar líneas divisorias o de formato
       if (
         row[0].toString().includes("_______________") ||
         row[0].toString().includes("__________________________________")
@@ -152,7 +207,6 @@ async function processProducts(inputFilePath, outputDir) {
         continue;
       }
 
-      // Actualizar categoría actual si es línea de categoría
       if (row[1] && row[1].toString().includes("CODIGO")) {
         if (row[2] && typeof row[2] === "string") {
           currentCategory = row[2].trim();
@@ -160,7 +214,6 @@ async function processProducts(inputFilePath, outputDir) {
         continue;
       }
 
-      // Si es una fila de producto (verificamos que tenga un código y que no sea una fila de cabecera)
       if (currentCategory && row[1] && !row[1].toString().includes("CODIGO")) {
         try {
           const rawStock = row[3] ? row[3].toString().trim() : "0";
@@ -172,7 +225,6 @@ async function processProducts(inputFilePath, outputDir) {
           const cleanTitle = fullTitle.split("[@@@]")[0].trim();
           const code = row[1] ? row[1].toString().trim() : "";
 
-          // El precio está en la columna 4 (índice 4), o si está vacía en columna 5 (índice 5)
           let price = 0;
           if (row[4] && row[4].toString().trim() !== "") {
             price = parseFloat(row[4].toString().replace(",", ".")) || 0;
@@ -180,29 +232,32 @@ async function processProducts(inputFilePath, outputDir) {
 
           const brand = row[8] ? row[8].toString().trim() : "Sin marca";
 
-          // Añadir marca al mapa si no existe
           if (!brandsMap.has(brand)) {
             brandsMap.set(brand, brandsMap.size + 1);
           }
 
           if (cleanTitle && cleanTitle !== "" && price > 0) {
-            // Obtener información de la imagen
+            // Obtener imagen
             const imageInfo = imageMap.get(code) || {
               imageUrl: "",
               imageTitle: `Producto ${code}`,
             };
 
-            // Generar descripción basada en la información del producto
-            const productInfo = {
-              title: cleanTitle,
-              fullTitle: fullTitle,
-              category: currentCategory,
-              brand: brand,
-              stock: stock,
-              code: code,
-            };
-
-            const description = generateDescription(productInfo);
+            // Obtener descripción del scraping o generarla desde plantilla
+            let description;
+            if (
+              descriptionsMap.has(code) &&
+              descriptionsMap.get(code).description !==
+                `No se pudo obtener la información para ${code}.` &&
+              descriptionsMap.get(code).description !==
+                "Error al procesar la solicitud."
+            ) {
+              description = descriptionsMap.get(code).description;
+            } else {
+              // Generar descripción mediante plantilla si no se encontró en web
+              const productInfo = productInfoMap.get(code);
+              description = generateDescription(productInfo);
+            }
 
             // Usar IDs para marca y categoría
             const brandId = brandsMap.get(brand);
@@ -218,7 +273,7 @@ async function processProducts(inputFilePath, outputDir) {
               Featured: Math.random() > 0.7, // 30% de probabilidad
               Stock: stock,
               ProductCode: code,
-              ImageUrl: imageInfo.imageUrl, // Nueva columna con URL de imagen
+              ImageUrl: imageInfo.imageUrl,
             });
           }
         } catch (err) {
@@ -265,9 +320,7 @@ async function processProducts(inputFilePath, outputDir) {
       "Categorias"
     );
     const categoriesOutputFile = `${outputDir}/categories.xlsx`;
-    XLSX.writeFile(categoriesWorkbook, categoriesOutputFile);
-
-    console.log(`Procesados ${products.length} productos.`);
+    XLSX.writeFile(categoriesWorkbook, categoriesOutputFile);    console.log(`Procesados ${products.length} productos.`);
     console.log(`Archivo de productos guardado en: ${productsOutputFile}`);
     console.log(
       `Archivo de marcas guardado en: ${brandsOutputFile} (${brands.length} marcas únicas)`
@@ -278,6 +331,39 @@ async function processProducts(inputFilePath, outputDir) {
   } catch (error) {
     console.error("Error:", error);
   }
+}
+
+/**
+ * Guarda las especificaciones en un archivo Excel separado
+ * @param {Map} descriptionsMap - Mapa con descripciones y especificaciones
+ * @param {string} outputPath - Ruta del archivo de salida
+ */
+function saveSpecificationsToExcel(descriptionsMap, outputPath) {
+  const specsArray = Array.from(descriptionsMap).map(([code, info]) => {
+    const specObj = {
+      ProductCode: code,
+      Description: info.rawDescription || "",
+    };
+
+    // Añadir cada categoría de especificación como columna
+    if (info.specs) {
+      Object.keys(info.specs).forEach((category) => {
+        const columnName = `Spec_${category
+          .replace(/\s+/g, "_")
+          .replace(/[^\w]/g, "")}`;
+        specObj[columnName] = info.specs[category].join("; ");
+      });
+    }
+
+    return specObj;
+  });
+
+  // Crear y guardar el archivo Excel
+  const workbook = XLSX.utils.book_new();
+  const worksheet = XLSX.utils.json_to_sheet(specsArray);
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Especificaciones");
+
+  XLSX.writeFile(workbook, outputPath);
 }
 
 // Configuración
