@@ -95,6 +95,12 @@ function formatSpecifications(specs) {
   return formattedSpecs;
 }
 
+// Función para capitalizar la primera letra de un texto
+function capitalizeFirstLetter(string) {
+  if (!string) return string;
+  return string.charAt(0).toUpperCase() + string.slice(1);
+}
+
 /**
  * Procesa los productos y genera tres archivos Excel separados
  * @param {string} inputFilePath Ruta del archivo CSV de entrada
@@ -304,13 +310,13 @@ async function processProducts(inputFilePath, outputDir) {
             const categoryId = categoriesMap.get(currentCategory);
 
             products.push({
-              Title: cleanTitle,
+              Title: capitalizeFirstLetter(cleanTitle), // Primera letra en mayúscula
               Description: description,
               Price: price,
               CategoryID: categoryId,
               BrandID: brandId,
               Size: "S",
-              Featured: Math.random() > 0.7, // 30% de probabilidad
+              Featured: false, // Siempre false en inglés
               Stock: stock,
               ProductCode: code,
               ImageUrl: imageInfo.imageUrl,
