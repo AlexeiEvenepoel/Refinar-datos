@@ -6,7 +6,7 @@ const {
 } = require("./scraper");
 
 // Configuración
-const inputFile = "./csv/DCW_20250512091632.csv";
+const inputFile = "./csv/DCW_20250513101017.csv";
 const outputDir = "./output";
 const productsOutputFile = `${outputDir}/productos_refinados.xlsx`;
 const finalOutputFile = `${outputDir}/productos_completos.xlsx`;
