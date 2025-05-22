@@ -21,76 +21,99 @@ async function loadPLimit() {
  * @param {string} productCode - Código del producto (ej: ACTE70207W)
  * @returns {Promise<{productCode: string, imageUrl: string, imageTitle: string}>}
  */
-async function getProductImage(productCode) {
+async function getProductImage(productCode, imageCache) {
+  // Usar caché si está disponible
+  if (imageCache && imageCache.has(productCode)) {
+    return imageCache.get(productCode);
+  }
+
   try {
     console.log(`Obteniendo imagen para producto: ${productCode}`);
+
+    // Probar primero la URL directa con HEAD request para verificar si existe
+    const directUrl = constructDirectImageUrl(productCode);
+    try {
+      const headResponse = await axios.head(directUrl, { timeout: 2000 });
+      if (headResponse.status === 200) {
+        const result = {
+          productCode,
+          imageUrl: directUrl,
+          imageTitle: `Producto ${productCode}`,
+        };
+
+        // Guardar en caché
+        if (imageCache) imageCache.set(productCode, result);
+        return result;
+      }
+    } catch (headError) {
+      // Si falla el HEAD request, continuamos con el método normal
+    }
 
     // URL de la página de imagen extendida
     const imageExtUrl = `https://www.deltron.com.pe/modulos/productos/items/image_ext.php?item=${productCode}`;
 
-    try {
-      // Realizar la petición HTTP
-      const response = await axios.get(imageExtUrl);
-      const $ = cheerio.load(response.data);
+    // Realizar la petición HTTP con timeout reducido
+    const response = await axios.get(imageExtUrl, { timeout: 5000 });
+    const $ = cheerio.load(response.data);
 
-      // Buscar la imagen dentro del tag center
-      let imageUrl = null;
-      let imageTitle = null;
+    // Buscar la imagen dentro del tag center
+    let imageUrl = null;
+    let imageTitle = null;
 
-      // La imagen suele estar después de &nbsp; y antes de <br>
-      $("center img").each(function () {
+    // La imagen suele estar después de &nbsp; y antes de <br>
+    $("center img").each(function () {
+      const src = $(this).attr("src");
+      if (src && !imageUrl) {
+        imageUrl = src;
+        imageTitle =
+          $(this).attr("alt") || `Imagen del producto ${productCode}`;
+        return false; // Romper el bucle
+      }
+    });
+
+    // Si no encontramos la imagen en center, buscar en todo el documento
+    if (!imageUrl) {
+      $("img").each(function () {
         const src = $(this).attr("src");
-        if (src && !imageUrl) {
+        if (
+          src &&
+          (src.includes(productCode.toLowerCase()) ||
+            src.includes("/productos/") ||
+            src.includes("/items/"))
+        ) {
           imageUrl = src;
           imageTitle =
             $(this).attr("alt") || `Imagen del producto ${productCode}`;
           return false; // Romper el bucle
         }
       });
-
-      // Si no encontramos la imagen en center, buscar en todo el documento
-      if (!imageUrl) {
-        $("img").each(function () {
-          const src = $(this).attr("src");
-          if (
-            src &&
-            (src.includes(productCode.toLowerCase()) ||
-              src.includes("/productos/") ||
-              src.includes("/items/"))
-          ) {
-            imageUrl = src;
-            imageTitle =
-              $(this).attr("alt") || `Imagen del producto ${productCode}`;
-            return false; // Romper el bucle
-          }
-        });
-      }
-
-      // Si aún no encontramos la imagen, generar URL basada en el patrón conocido
-      if (!imageUrl) {
-        imageUrl = constructDirectImageUrl(productCode);
-      }
-
-      return {
-        productCode,
-        imageUrl: imageUrl || "No encontrada",
-        imageTitle: imageTitle || `Producto ${productCode}`,
-      };
-    } catch (error) {
-      console.error(`Error al procesar ${productCode}: ${error.message}`);
-      return {
-        productCode,
-        imageUrl: constructDirectImageUrl(productCode),
-        imageTitle: `Producto ${productCode}`,
-      };
     }
-  } catch (error) {
-    console.error(`Error general para ${productCode}: ${error.message}`);
-    return {
+
+    // Si aún no encontramos la imagen, generar URL basada en el patrón conocido
+    if (!imageUrl) {
+      imageUrl = constructDirectImageUrl(productCode);
+    }
+
+    const result = {
       productCode,
-      imageUrl: "Error",
-      imageTitle: "Error",
+      imageUrl: imageUrl || "No encontrada",
+      imageTitle: imageTitle || `Producto ${productCode}`,
     };
+
+    // Al final, guardar en caché
+    if (imageCache) imageCache.set(productCode, result);
+    return result;
+  } catch (error) {
+    // Manejar errores
+    const result = {
+      productCode,
+      imageUrl: "No encontrada",
+      imageTitle: `Error: ${productCode}`,
+    };
+
+    // Guardar en caché incluso los errores para no repetir
+    if (imageCache) imageCache.set(productCode, result);
+    return result;
   }
 }
 
@@ -230,25 +253,40 @@ function readRefinedProducts(excelPath) {
 function saveProductsWithImages(products, imageMap, outputPath) {
   console.log("Generando archivo Excel con productos e imágenes...");
 
-  // Agregar solo la URL de la imagen a cada producto (omitir ImageTitle)
+  // Agregar solo los campos requeridos y en el orden solicitado
   const productsWithImages = products.map((product) => {
     const imageInfo = imageMap.get(product.ProductCode) || {
       imageUrl: constructDirectImageUrl(product.ProductCode),
     };
 
     return {
-      ...product,
+      Title: product.Title,
+      Description: product.Description,
+      Price: product.Price,
+      CategoryID: product.CategoryID,
+      BrandID: product.BrandID,
+      Size: product.Size || "S",
+      Featured: false, // Siempre en inglés FALSE, no FALSO
+      Stock: product.Stock,
+      ProductCode: product.ProductCode,
       ImageUrl: imageInfo.imageUrl,
-      // ImageTitle ya no se agrega
     };
   });
 
-  // Crear y guardar el archivo Excel
+  // Crear y guardar el archivo Excel con configuración UTF-8
   const workbook = XLSX.utils.book_new();
   const worksheet = XLSX.utils.json_to_sheet(productsWithImages);
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Productos");
 
-  XLSX.writeFile(workbook, outputPath);
+  // Opciones para codificación UTF-8
+  const writeOpts = {
+    bookType: "xlsx",
+    type: "buffer",
+    bookSST: false,
+    codepage: 65001, // UTF-8
+  };
+
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Productos");
+  XLSX.writeFile(workbook, outputPath, writeOpts);
 
   console.log(`Archivo guardado con éxito en: ${outputPath}`);
   return outputPath;
@@ -267,7 +305,7 @@ async function processRefinedProducts(
 ) {
   try {
     console.log("Iniciando procesamiento de productos refinados...");
-    const concurrencyLevel = options.concurrency || 10;
+    const concurrencyLevel = options.concurrency || 20;
     console.log(
       `Nivel de concurrencia: ${concurrencyLevel} peticiones simultáneas`
     );
@@ -299,36 +337,63 @@ async function processRefinedProducts(
       `Se han identificado ${productCodes.length} códigos de productos.`
     );
 
-    // Procesar códigos para obtener imágenes con concurrencia
+    // Agregar caché para evitar repetir peticiones
+    const imageCache = new Map();
+
+    // Filtro para omitir productos sin imagen
+    const skipFailedImages = !!options.skipFailedImages;
+    if (skipFailedImages) {
+      console.log(
+        "⚠️ FILTRO ACTIVADO: Omitiendo productos sin imágenes disponibles"
+      );
+    }
+
+    // Procesamiento optimizado
     console.log("Obteniendo imágenes para los productos...");
     const imageResults = await processProductCodes(
       productCodes,
-      concurrencyLevel
+      concurrencyLevel,
+      imageCache
     );
 
     // Crear mapa de imágenes para acceso rápido
     const imageMap = new Map();
     imageResults.forEach((result) => {
+      const hasValidImage =
+        result.imageUrl &&
+        result.imageUrl !== "No encontrada" &&
+        result.imageUrl !== "Error" &&
+        !result.imageUrl.endsWith("no_image.jpg");
+
       imageMap.set(result.productCode, {
         imageUrl: result.imageUrl,
         imageTitle: result.imageTitle,
+        hasValidImage: hasValidImage,
       });
     });
 
-    // Guardar productos con URLs de imágenes
-    saveProductsWithImages(products, imageMap, outputPath);
+    // Guardar productos con URLs de imágenes, filtrando si es necesario
+    const filteredProducts = skipFailedImages
+      ? products.filter((p) => {
+          const imgInfo = imageMap.get(p.ProductCode);
+          return imgInfo && imgInfo.hasValidImage;
+        })
+      : products;
 
-    // También guardar solo las imágenes en un archivo separado
-    const imagesOnlyPath = path.join(
-      path.dirname(outputPath),
-      "product_images.xlsx"
-    );
-    saveToExcel(imageResults, imagesOnlyPath);
+    if (skipFailedImages) {
+      console.log(
+        `Filtrados ${
+          products.length - filteredProducts.length
+        } productos sin imagen.`
+      );
+    }
+
+    saveProductsWithImages(filteredProducts, imageMap, outputPath);
 
     console.log("Proceso completado con éxito.");
   } catch (error) {
     console.error("Error en el proceso:", error);
-    throw error; // Re-lanzar para manejo superior
+    throw error;
   }
 }
 

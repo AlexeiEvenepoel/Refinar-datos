@@ -20,7 +20,12 @@ async function loadPLimit() {
  * @param {string} productCode - Código del producto
  * @returns {Promise<{productCode: string, description: string, specs: Object}>}
  */
-async function getProductDescriptionAndSpecs(productCode) {
+async function getProductDescriptionAndSpecs(productCode, cache) {
+  // Usar caché si está disponible
+  if (cache && cache.has(productCode)) {
+    return cache.get(productCode);
+  }
+
   try {
     console.log(`Obteniendo información para producto: ${productCode}`);
 
@@ -286,17 +291,22 @@ async function getProductDescriptionAndSpecs(productCode) {
         combinedDescription += `\n\nESPECIFICACIONES TÉCNICAS:${formattedSpecs}`;
       }
 
-      return {
+      // Al final, guardar en caché
+      const result = {
         productCode,
         description: combinedDescription,
         rawDescription: description,
         specs: specs,
-        normalizedSpecs: normalizedSpecs, // Incluir las especificaciones normalizadas
+        normalizedSpecs: normalizedSpecs,
         hasSpecs: hasSpecs,
       };
+
+      if (cache) cache.set(productCode, result);
+      return result;
     } catch (error) {
       console.error(`Error al procesar ${productCode}: ${error.message}`);
-      return {
+      // Manejar errores y guardar en caché
+      const errorResult = {
         productCode,
         description: `No se pudo obtener la información para ${productCode}. Error: ${error.message}`,
         rawDescription: "",
@@ -304,6 +314,9 @@ async function getProductDescriptionAndSpecs(productCode) {
         normalizedSpecs: {},
         hasSpecs: false,
       };
+
+      if (cache) cache.set(productCode, errorResult);
+      return errorResult;
     }
   } catch (error) {
     console.error(`Error general para ${productCode}: ${error.message}`);
@@ -348,80 +361,47 @@ function saveProductsWithInfo(products, productInfoMap, outputPath) {
     "Generando archivo Excel con productos, descripciones y especificaciones..."
   );
 
-  // Actualizar descripciones de los productos
+  // Actualizar descripciones de los productos y mantener solo los campos requeridos
   const enhancedProducts = products.map((product) => {
     const productInfo = productInfoMap.get(product.ProductCode);
 
-    if (productInfo && productInfo.description) {
-      return {
-        ...product,
-        Description: productInfo.description,
-      };
-    }
-    return product;
-  });
-
-  // Crear y guardar el archivo Excel
-  const workbook = XLSX.utils.book_new();
-  const worksheet = XLSX.utils.json_to_sheet(enhancedProducts);
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Productos");
-
-  XLSX.writeFile(workbook, outputPath);
-
-  console.log(`Archivo guardado con éxito en: ${outputPath}`);
-  return outputPath;
-}
-
-/**
- * También guarda las especificaciones en un archivo separado para referencia
- * @param {Map} productInfoMap - Mapa de información por código
- * @param {string} outputPath - Ruta del archivo de salida
- */
-function saveSpecificationsToExcel(productInfoMap, outputPath) {
-  console.log(
-    "Generando archivo Excel con especificaciones técnicas detalladas..."
-  );
-
-  // Convertir el mapa a un array de objetos con formato plano para Excel
-  const specsArray = Array.from(productInfoMap).map(([code, info]) => {
-    // Crear objeto base con el código
-    const specObj = {
-      ProductCode: code,
-      Description: info.rawDescription || "",
+    const normalizedProduct = {
+      Title: product.Title,
+      Description:
+        productInfo && productInfo.description
+          ? productInfo.description
+          : product.Description,
+      Price: product.Price,
+      CategoryID: product.CategoryID,
+      BrandID: product.BrandID,
+      Size: product.Size || "S",
+      Featured: false, // Siempre en inglés FALSE, no FALSO
+      Stock: product.Stock,
+      ProductCode: product.ProductCode,
+      ImageUrl: product.ImageUrl,
     };
 
-    // Añadir cada categoría de especificación normalizada como columna
-    if (info.normalizedSpecs) {
-      Object.keys(info.normalizedSpecs).forEach((category) => {
-        // Limpiar nombre de categoría para usarlo como nombre de columna
-        const columnName = `Spec_${category
-          .replace(/\s+/g, "_")
-          .replace(/[^\w]/g, "")}`;
-        specObj[columnName] = info.normalizedSpecs[category].join("; ");
-      });
-    }
-    // También añadir las especificaciones originales como referencia
-    else if (info.specs) {
-      Object.keys(info.specs).forEach((category) => {
-        // Limpiar nombre de categoría para usarlo como nombre de columna
-        const columnName = `Spec_Original_${category
-          .replace(/\s+/g, "_")
-          .replace(/[^\w]/g, "")}`;
-        specObj[columnName] = info.specs[category].join("; ");
-      });
-    }
-
-    return specObj;
+    return normalizedProduct;
   });
 
-  // Crear y guardar el archivo Excel
+  // Crear y guardar el archivo Excel con configuración para manejar caracteres especiales
   const workbook = XLSX.utils.book_new();
-  const worksheet = XLSX.utils.json_to_sheet(specsArray);
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Especificaciones");
+  const worksheet = XLSX.utils.json_to_sheet(enhancedProducts);
 
-  XLSX.writeFile(workbook, outputPath);
+  // Configurar codificación para mantener acentos y caracteres especiales
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Productos");
 
-  console.log(`Archivo de especificaciones guardado en: ${outputPath}`);
+  // Opciones para codificación UTF-8
+  const writeOpts = {
+    bookType: "xlsx",
+    type: "buffer",
+    bookSST: false,
+    codepage: 65001, // UTF-8
+  };
+
+  XLSX.writeFile(workbook, outputPath, writeOpts);
+
+  console.log(`Archivo guardado con éxito en: ${outputPath}`);
   return outputPath;
 }
 
@@ -471,7 +451,7 @@ async function testSingleProduct(code) {
  */
 async function processAllProducts(inputPath, outputPath, options = {}) {
   console.log("Iniciando procesamiento completo de productos...");
-  const concurrencyLevel = options.concurrency || 5;
+  const concurrencyLevel = options.concurrency || 15;
   console.log(
     `Nivel de concurrencia: ${concurrencyLevel} peticiones simultáneas`
   );
@@ -483,8 +463,30 @@ async function processAllProducts(inputPath, outputPath, options = {}) {
     return;
   }
 
+  // Filtrar productos sin imagen si la opción está activada
+  const skipNoImage = !!options.skipNoImage;
+  let filteredProducts = products;
+
+  if (skipNoImage) {
+    console.log("⚠️ FILTRO ACTIVADO: Omitiendo productos sin imagen");
+    filteredProducts = products.filter((product) => {
+      return (
+        product.ImageUrl &&
+        product.ImageUrl !== "" &&
+        product.ImageUrl !== "No encontrada" &&
+        product.ImageUrl !== "Error" &&
+        !product.ImageUrl.includes("no_image.jpg")
+      );
+    });
+    console.log(
+      `Filtrados ${
+        products.length - filteredProducts.length
+      } productos sin imagen.`
+    );
+  }
+
   // Extraer códigos de producto
-  const productCodes = products
+  const productCodes = filteredProducts
     .map((product) => product.ProductCode)
     .filter((code) => code);
 
@@ -493,6 +495,9 @@ async function processAllProducts(inputPath, outputPath, options = {}) {
   // Cargar p-limit
   const pLimit = await loadPLimit();
   const limit = pLimit(concurrencyLevel);
+
+  // Agregar caché para descripciones
+  const descriptionCache = new Map();
 
   const productInfoMap = new Map();
 
@@ -519,7 +524,10 @@ async function processAllProducts(inputPath, outputPath, options = {}) {
             `[${processedCount}/${productCodes.length}] Procesando producto: ${code}`
           );
 
-          const result = await getProductDescriptionAndSpecs(code);
+          const result = await getProductDescriptionAndSpecs(
+            code,
+            descriptionCache
+          );
           productInfoMap.set(code, result);
 
           // Mostrar resumen del resultado
@@ -551,14 +559,12 @@ async function processAllProducts(inputPath, outputPath, options = {}) {
     await Promise.all(promises);
   }
 
-  // Guardar productos con descripciones y especificaciones
-  saveProductsWithInfo(products, productInfoMap, outputPath);
-
-  // También guardar las especificaciones en un archivo separado para referencia
-  const specsPath = outputPath.replace(".xlsx", "_specs.xlsx");
-  saveSpecificationsToExcel(productInfoMap, specsPath);
+  // Guardar solo el archivo final (no specs separado)
+  saveProductsWithInfo(filteredProducts, productInfoMap, outputPath);
+  console.log(`Archivo final guardado en: ${outputPath}`);
 
   console.log("Procesamiento completo finalizado.");
+  return outputPath;
 }
 
 // Función principal

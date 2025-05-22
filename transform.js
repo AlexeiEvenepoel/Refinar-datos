@@ -107,10 +107,22 @@ function formatSpecifications(specs) {
   return formattedSpecs;
 }
 
-// Función para capitalizar la primera letra de un texto
+// Función para capitalizar y normalizar texto con tildes
 function capitalizeFirstLetter(string) {
   if (!string) return string;
-  return string.charAt(0).toUpperCase() + string.slice(1);
+
+  // Convertir caracteres especiales comúnmente mal codificados
+  const normalizedString = string
+    .replace(/Ã¡/g, "á")
+    .replace(/Ã©/g, "é")
+    .replace(/Ã­/g, "í")
+    .replace(/Ã³/g, "ó")
+    .replace(/Ãº/g, "ú")
+    .replace(/Ã±/g, "ñ")
+    .replace(/�/g, "í") // Reemplazar símbolos de interrogación por la letra correspondiente
+    .replace(/Ã/g, "Á");
+
+  return normalizedString.charAt(0).toUpperCase() + normalizedString.slice(1);
 }
 
 /**
@@ -122,7 +134,7 @@ function capitalizeFirstLetter(string) {
 async function processProducts(inputFilePath, outputDir, options = {}) {
   try {
     console.log("Iniciando procesamiento de datos...");
-    const concurrencyLevel = options.concurrency || 5;
+    const concurrencyLevel = options.concurrency || 10;
     console.log(
       `Nivel de concurrencia: ${concurrencyLevel} peticiones simultáneas`
     );
@@ -401,6 +413,12 @@ async function processProducts(inputFilePath, outputDir, options = {}) {
     console.log("Procesando productos completos...");
     currentCategory = "";
 
+    // Filtros para el procesamiento
+    const skipNoStock = !!options.skipNoStock;
+    if (skipNoStock) {
+      console.log("⚠️ FILTRO ACTIVADO: Omitiendo productos sin stock");
+    }
+
     for (let i = startRow; i < rawData.length; i++) {
       const row = rawData[i];
       if (!row || row.length < 3) continue;
@@ -434,6 +452,11 @@ async function processProducts(inputFilePath, outputDir, options = {}) {
           const stock = rawStock.startsWith(">")
             ? parseInt(rawStock.substring(1)) || 0
             : parseInt(rawStock) || 0;
+
+          // Filtrar productos sin stock si la opción está activada
+          if (skipNoStock && stock <= 0) {
+            continue; // Omitir este producto
+          }
 
           const fullTitle = row[2]
             ? row[2].toString().replace(/^"(.*)"$/, "$1")
@@ -499,18 +522,45 @@ async function processProducts(inputFilePath, outputDir, options = {}) {
     }
 
     console.log(`Procesados ${products.length} productos completos.`);
-    console.log("Generando archivos Excel...");
+
+    // Guardar en archivos usando las rutas proporcionadas
+    const finalOutputFile =
+      options.tempFilePath || `${outputDir}/productos_refinados.xlsx`;
+    const brandsOutputFile = `${outputDir}/brands.xlsx`;
+    const categoriesOutputFile = `${outputDir}/categories.xlsx`;
+
+    // Modificar la parte donde se normalizan los productos
+    const formattedProducts = products.map((product) => ({
+      Title: product.Title,
+      Description: product.Description,
+      Price: product.Price,
+      CategoryID: product.CategoryID,
+      BrandID: product.BrandID,
+      Size: product.Size || "S",
+      Featured: false, // Asegurar que es booleano false, no string "FALSO"
+      Stock: product.Stock,
+      ProductCode: product.ProductCode,
+      ImageUrl: product.ImageUrl || "",
+    }));
 
     // Crear archivo de productos
     const productsWorkbook = XLSX.utils.book_new();
-    const productsWorksheet = XLSX.utils.json_to_sheet(products);
+    const productsWorksheet = XLSX.utils.json_to_sheet(formattedProducts);
     XLSX.utils.book_append_sheet(
       productsWorkbook,
       productsWorksheet,
       "Productos"
     );
-    const productsOutputFile = `${outputDir}/productos_refinados.xlsx`;
-    XLSX.writeFile(productsWorkbook, productsOutputFile);
+
+    // Opciones para codificación UTF-8
+    const writeOpts = {
+      bookType: "xlsx",
+      type: "buffer",
+      bookSST: false,
+      codepage: 65001, // UTF-8
+    };
+
+    XLSX.writeFile(productsWorkbook, finalOutputFile, writeOpts);
 
     // Crear archivo de marcas
     const brands = Array.from(brandsMap).map(([name, id]) => ({
@@ -520,7 +570,6 @@ async function processProducts(inputFilePath, outputDir, options = {}) {
     const brandsWorkbook = XLSX.utils.book_new();
     const brandsWorksheet = XLSX.utils.json_to_sheet(brands);
     XLSX.utils.book_append_sheet(brandsWorkbook, brandsWorksheet, "Marcas");
-    const brandsOutputFile = `${outputDir}/brands.xlsx`;
     XLSX.writeFile(brandsWorkbook, brandsOutputFile);
 
     // Crear archivo de categorías
@@ -535,10 +584,9 @@ async function processProducts(inputFilePath, outputDir, options = {}) {
       categoriesWorksheet,
       "Categorias"
     );
-    const categoriesOutputFile = `${outputDir}/categories.xlsx`;
     XLSX.writeFile(categoriesWorkbook, categoriesOutputFile);
 
-    console.log(`Archivo de productos guardado en: ${productsOutputFile}`);
+    console.log(`Archivo de productos guardado en: ${finalOutputFile}`);
     console.log(
       `Archivo de marcas guardado en: ${brandsOutputFile} (${brands.length} marcas únicas)`
     );
@@ -547,7 +595,7 @@ async function processProducts(inputFilePath, outputDir, options = {}) {
     );
   } catch (error) {
     console.error("Error:", error);
-    throw error; // Re-lanzar el error para que se propague
+    throw error;
   }
 }
 
@@ -641,7 +689,7 @@ async function previewProduct(productCode) {
 }
 
 /**
- * Determina el mejor nivel de concurrencia para el entorno actual
+ * Determina el mejor nivel de concurrencia para el entorno current
  * @param {number} minConcurrency Mínima concurrencia a probar
  * @param {number} maxConcurrency Máxima concurrencia a probar
  * @param {string} sampleCode Código de producto para pruebas
