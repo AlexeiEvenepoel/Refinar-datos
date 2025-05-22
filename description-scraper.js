@@ -61,47 +61,210 @@ async function getProductDescriptionAndSpecs(productCode) {
         }
       }
 
-      // 2. Extraer las especificaciones técnicas de la tabla
+      // 2. Extraer las especificaciones técnicas de manera más robusta
       const specs = {};
-      let currentCategory = "";
+      const normalizedSpecs = {}; // Para guardar especificaciones normalizadas
 
-      // Buscar la tabla de especificaciones en el div con id "esp_tecnicas"
-      $("#esp_tecnicas table tr").each(function () {
-        const row = $(this);
+      // Capturar datos de la tabla con estructura completa
+      // Buscar todas las tablas de especificaciones en diferentes contenedores posibles
+      const specTables = [
+        $("#esp_tecnicas table"),
+        $("#contenedorHtml table[tbn='3']"),
+        $("table[tbn='3']"),
+        $("#contenedorHtml table"),
+      ];
 
-        // Buscar celdas con atributo fircol="y" (encabezados de categoría)
-        const headerCell = row.find('td[fircol="y"]');
-        if (headerCell.length > 0) {
-          currentCategory = headerCell.text().trim();
-          specs[currentCategory] = [];
-        }
+      // Definir categorías estándar y sus posibles variantes
+      const categoryMap = {
+        // Categorías principales estándar
+        DISPOSITIVO: ["DISPOSITIVO", "TIPO", "TIPO DE DISPOSITIVO", "EQUIPO"],
+        MARCA: ["MARCA", "FABRICANTE", "BRAND"],
+        MODELO: ["MODELO", "MODEL", "NUMERO DE MODELO"],
+        "NUMERO DE PARTE": [
+          "NUMERO DE PARTE",
+          "PART NUMBER",
+          "PART NO",
+          "PN",
+          "P/N",
+        ],
+        CARACTERISTICAS: [
+          "CARACTERISTICAS",
+          "FEATURES",
+          "ESPECIFICACIONES",
+          "SPECS",
+        ],
+        COLOR: ["COLOR", "COLORES", "COLOUR"],
+        PUERTOS: ["PUERTOS", "PORTS", "CONECTORES", "CONECTIVIDAD"],
+        DIMENSIONES: ["DIMENSIONES", "DIMENSIONS", "TAMAÑO", "SIZE"],
+        PESO: ["PESO", "WEIGHT"],
+        INCLUYE: ["INCLUYE", "INCLUIDO", "CONTENIDO", "CONTENIDO DEL PAQUETE"],
+      };
 
-        // Obtener las celdas de datos (no encabezados)
-        const dataCells = row.find('td:not([fircol="y"])');
-        if (dataCells.length > 0 && currentCategory) {
-          const specText = dataCells
-            .map(function () {
-              return $(this).text().trim();
-            })
-            .get()
-            .join(" ")
-            .trim();
-
-          if (specText) {
-            specs[currentCategory].push(specText);
+      // Función para normalizar el nombre de la categoría
+      const normalizeCategory = (category) => {
+        const catUpper = category.toUpperCase().trim();
+        for (const [standard, variants] of Object.entries(categoryMap)) {
+          if (variants.includes(catUpper)) {
+            return standard;
           }
         }
-      });
+        return category.trim(); // Si no coincide con ninguna categoría estándar
+      };
+
+      // Procesar cada tabla posible hasta encontrar una con datos
+      let foundSpecTable = false;
+
+      for (const tableSelector of specTables) {
+        if (tableSelector.length > 0 && !foundSpecTable) {
+          foundSpecTable = true;
+
+          // Procesar cada fila de la tabla
+          tableSelector.find("tr").each(function () {
+            const row = $(this);
+
+            // Buscar la celda de categoría (con atributo fircol="y")
+            const categoryCell = row.find('td[fircol="y"]');
+
+            if (categoryCell.length > 0) {
+              // Extraer y normalizar el nombre de la categoría
+              const rawCategory = categoryCell.text().trim();
+              const normalizedCategory = normalizeCategory(rawCategory);
+
+              // Inicializar arrays para esta categoría si no existen
+              if (!specs[rawCategory]) {
+                specs[rawCategory] = [];
+              }
+
+              if (!normalizedSpecs[normalizedCategory]) {
+                normalizedSpecs[normalizedCategory] = [];
+              }
+
+              // Determinar el número de filas que abarca esta categoría
+              const rowspan = parseInt(categoryCell.attr("rowspan")) || 1;
+
+              // Extraer valores de la primera fila
+              const valueCells = row.find('td:not([fircol="y"])');
+              if (valueCells.length > 0) {
+                const specValue = valueCells
+                  .map(function () {
+                    return $(this).text().trim();
+                  })
+                  .get()
+                  .join(" ")
+                  .trim();
+
+                if (specValue) {
+                  specs[rawCategory].push(specValue);
+                  normalizedSpecs[normalizedCategory].push(specValue);
+                }
+              }
+
+              // Si rowspan > 1, buscar las siguientes filas que pertenecen a esta categoría
+              if (rowspan > 1) {
+                let nextRow = row.next();
+                for (let i = 1; i < rowspan && nextRow.length > 0; i++) {
+                  const nextValueCells = nextRow.find("td");
+                  if (nextValueCells.length > 0) {
+                    const nextSpecValue = nextValueCells
+                      .map(function () {
+                        return $(this).text().trim();
+                      })
+                      .get()
+                      .join(" ")
+                      .trim();
+
+                    if (nextSpecValue) {
+                      specs[rawCategory].push(nextSpecValue);
+                      normalizedSpecs[normalizedCategory].push(nextSpecValue);
+                    }
+                  }
+                  nextRow = nextRow.next();
+                }
+              }
+            }
+          });
+        }
+      }
+
+      // Si no se encontraron especificaciones, intentar un enfoque alternativo
+      if (Object.keys(specs).length === 0) {
+        // Buscar cualquier tabla que pueda tener especificaciones
+        $("table").each(function () {
+          const table = $(this);
+
+          // Si la tabla tiene filas con un patrón que parece de especificaciones
+          if (table.find("tr").length > 2) {
+            table.find("tr").each(function () {
+              const row = $(this);
+              const cells = row.find("td");
+
+              // Si hay al menos 2 celdas, asumir que la primera es categoría y la segunda es valor
+              if (cells.length >= 2) {
+                const category = $(cells[0]).text().trim();
+                const value = $(cells[1]).text().trim();
+
+                if (category && value) {
+                  const normalizedCategory = normalizeCategory(category);
+
+                  if (!specs[category]) {
+                    specs[category] = [];
+                  }
+
+                  if (!normalizedSpecs[normalizedCategory]) {
+                    normalizedSpecs[normalizedCategory] = [];
+                  }
+
+                  specs[category].push(value);
+                  normalizedSpecs[normalizedCategory].push(value);
+                }
+              }
+            });
+          }
+        });
+      }
 
       // 3. Formatear las especificaciones como texto para concatenar con la descripción
       let formattedSpecs = "";
       let hasSpecs = false;
 
-      Object.keys(specs).forEach((category) => {
-        if (specs[category].length > 0) {
+      // Primero filtremos categorías compuestas
+      const filteredCategories = Object.keys(normalizedSpecs).filter(
+        (category) => {
+          // Filtrar categorías con nombres demasiado largos (probablemente compuestos)
+          if (category.length > 25) return false;
+
+          // Filtrar categorías que contienen otras categorías completas
+          for (const standardCat of Object.keys(categoryMap)) {
+            if (
+              category !== standardCat &&
+              category.includes(standardCat) &&
+              category.length > standardCat.length + 5
+            ) {
+              return false;
+            }
+          }
+
+          return true;
+        }
+      );
+
+      // Usar solo las especificaciones normalizadas filtradas para la salida
+      filteredCategories.forEach((category) => {
+        if (normalizedSpecs[category].length > 0) {
           hasSpecs = true;
           formattedSpecs += `\n\n${category}:\n`;
-          formattedSpecs += specs[category].join("\n");
+
+          // Filtrar valores duplicados y valores que contienen múltiples datos concatenados
+          const uniqueValues = [...new Set(normalizedSpecs[category])].filter(
+            (value) => {
+              // Filtrar valores que parecen estar concatenados (tienen múltiples líneas o son muy largos)
+              return !value.includes("\n") && value.length < 100;
+            }
+          );
+
+          formattedSpecs += uniqueValues
+            .map((value) => `- ${value}`)
+            .join("\n");
         }
       });
 
@@ -116,6 +279,7 @@ async function getProductDescriptionAndSpecs(productCode) {
         description: combinedDescription,
         rawDescription: description,
         specs: specs,
+        normalizedSpecs: normalizedSpecs, // Incluir las especificaciones normalizadas
         hasSpecs: hasSpecs,
       };
     } catch (error) {
@@ -125,6 +289,7 @@ async function getProductDescriptionAndSpecs(productCode) {
         description: `No se pudo obtener la información para ${productCode}. Error: ${error.message}`,
         rawDescription: "",
         specs: {},
+        normalizedSpecs: {},
         hasSpecs: false,
       };
     }
@@ -135,6 +300,7 @@ async function getProductDescriptionAndSpecs(productCode) {
       description: "Error al procesar la solicitud.",
       rawDescription: "",
       specs: {},
+      normalizedSpecs: {},
       hasSpecs: false,
     };
   }
@@ -212,11 +378,21 @@ function saveSpecificationsToExcel(productInfoMap, outputPath) {
       Description: info.rawDescription || "",
     };
 
-    // Añadir cada categoría de especificación como columna
-    if (info.specs) {
-      Object.keys(info.specs).forEach((category) => {
+    // Añadir cada categoría de especificación normalizada como columna
+    if (info.normalizedSpecs) {
+      Object.keys(info.normalizedSpecs).forEach((category) => {
         // Limpiar nombre de categoría para usarlo como nombre de columna
         const columnName = `Spec_${category
+          .replace(/\s+/g, "_")
+          .replace(/[^\w]/g, "")}`;
+        specObj[columnName] = info.normalizedSpecs[category].join("; ");
+      });
+    }
+    // También añadir las especificaciones originales como referencia
+    else if (info.specs) {
+      Object.keys(info.specs).forEach((category) => {
+        // Limpiar nombre de categoría para usarlo como nombre de columna
+        const columnName = `Spec_Original_${category
           .replace(/\s+/g, "_")
           .replace(/[^\w]/g, "")}`;
         specObj[columnName] = info.specs[category].join("; ");
@@ -249,29 +425,11 @@ async function testSingleProduct(code) {
   console.log(`- Código: ${result.productCode}`);
   console.log(`- Descripción original: ${result.rawDescription}`);
 
-  console.log(`\nESPECIFICACIONES EXTRAÍDAS:`);
-
+  console.log(`\nESPECIFICACIONES EXTRAÍDAS (ORIGINALES):`);
   if (result.hasSpecs) {
-    // Procesar categorías para eliminar duplicidades
-    const processedCategories = new Set();
-
-    // Ignorar la primera categoría que contiene todas las especificaciones juntas
-    const categories = Object.keys(result.specs).filter(
-      (cat) =>
-        !cat.includes("DISPOSITIVOMARCAMODELONUMERO DE PARTECARACTERISTICAS")
-    );
-
-    // Procesar cada categoría individualmente
-    categories.forEach((category) => {
-      if (
-        !processedCategories.has(category) &&
-        result.specs[category].length > 0
-      ) {
-        processedCategories.add(category);
-
+    Object.keys(result.specs).forEach((category) => {
+      if (result.specs[category].length > 0) {
         console.log(`\n${category}:`);
-
-        // Filtrar especificaciones duplicadas usando Set
         const uniqueSpecs = [...new Set(result.specs[category])];
         uniqueSpecs.forEach((spec) => {
           console.log(`  - ${spec}`);
@@ -280,6 +438,31 @@ async function testSingleProduct(code) {
     });
   } else {
     console.log("  No se encontraron especificaciones técnicas");
+  }
+
+  console.log(`\nESPECIFICACIONES NORMALIZADAS:`);
+  if (result.hasSpecs && result.normalizedSpecs) {
+    // Mostrar solo categorías estándar y filtrar compuestas
+    const filteredCats = Object.keys(result.normalizedSpecs).filter(
+      (cat) =>
+        (cat.length < 25 && !cat.includes("DISPOSITIVO")) ||
+        cat === "DISPOSITIVO"
+    );
+
+    filteredCats.forEach((category) => {
+      if (result.normalizedSpecs[category].length > 0) {
+        console.log(`\n${category}:`);
+        // Filtrar valores duplicados y combinados
+        const uniqueSpecs = [
+          ...new Set(result.normalizedSpecs[category]),
+        ].filter((spec) => spec.length < 100);
+        uniqueSpecs.forEach((spec) => {
+          console.log(`  - ${spec}`);
+        });
+      }
+    });
+  } else {
+    console.log("  No se encontraron especificaciones normalizadas");
   }
 }
 
