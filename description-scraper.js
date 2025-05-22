@@ -425,21 +425,6 @@ async function testSingleProduct(code) {
   console.log(`- Código: ${result.productCode}`);
   console.log(`- Descripción original: ${result.rawDescription}`);
 
-  console.log(`\nESPECIFICACIONES EXTRAÍDAS (ORIGINALES):`);
-  if (result.hasSpecs) {
-    Object.keys(result.specs).forEach((category) => {
-      if (result.specs[category].length > 0) {
-        console.log(`\n${category}:`);
-        const uniqueSpecs = [...new Set(result.specs[category])];
-        uniqueSpecs.forEach((spec) => {
-          console.log(`  - ${spec}`);
-        });
-      }
-    });
-  } else {
-    console.log("  No se encontraron especificaciones técnicas");
-  }
-
   console.log(`\nESPECIFICACIONES NORMALIZADAS:`);
   if (result.hasSpecs && result.normalizedSpecs) {
     // Mostrar solo categorías estándar y filtrar compuestas
