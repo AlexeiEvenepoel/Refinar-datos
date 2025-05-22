@@ -3,6 +3,18 @@ const cheerio = require("cheerio");
 const XLSX = require("xlsx");
 const fs = require("fs");
 
+// Inicializar como null y cargarlo dinámicamente después
+let pLimit = null;
+
+// Función para cargar p-limit dinámicamente
+async function loadPLimit() {
+  if (!pLimit) {
+    const module = await import("p-limit");
+    pLimit = module.default;
+  }
+  return pLimit;
+}
+
 /**
  * Extrae la descripción y especificaciones del producto desde la página web de Deltron
  * @param {string} productCode - Código del producto
@@ -455,9 +467,14 @@ async function testSingleProduct(code) {
  * Procesa todos los productos del Excel
  * @param {string} inputPath - Ruta del archivo de entrada
  * @param {string} outputPath - Ruta del archivo de salida
+ * @param {Object} options - Opciones de procesamiento
  */
-async function processAllProducts(inputPath, outputPath) {
+async function processAllProducts(inputPath, outputPath, options = {}) {
   console.log("Iniciando procesamiento completo de productos...");
+  const concurrencyLevel = options.concurrency || 5;
+  console.log(
+    `Nivel de concurrencia: ${concurrencyLevel} peticiones simultáneas`
+  );
 
   // Leer productos del Excel
   const products = readProductsFromExcel(inputPath);
@@ -473,31 +490,65 @@ async function processAllProducts(inputPath, outputPath) {
 
   console.log(`Procesando ${productCodes.length} productos...`);
 
+  // Cargar p-limit
+  const pLimit = await loadPLimit();
+  const limit = pLimit(concurrencyLevel);
+
   const productInfoMap = new Map();
 
-  // Procesar cada producto
-  for (let i = 0; i < productCodes.length; i++) {
-    const code = productCodes[i];
-    console.log(`Procesando producto ${i + 1}/${productCodes.length}: ${code}`);
+  // Dividir en lotes para mostrar progreso
+  const batchSize = 20;
+  const batches = [];
+  for (let i = 0; i < productCodes.length; i += batchSize) {
+    batches.push(productCodes.slice(i, i + batchSize));
+  }
 
-    const result = await getProductDescriptionAndSpecs(code);
-    productInfoMap.set(code, result);
+  let processedCount = 0;
 
-    // Mostrar resumen del resultado
-    const descriptionPreview = result.description
-      .substring(0, 50)
-      .replace(/\n/g, " ");
-    console.log(`- Información obtenida: ${descriptionPreview}...`);
-    console.log(`- Tiene especificaciones: ${result.hasSpecs ? "Sí" : "No"}`);
+  // Procesar por lotes para mejor control de progreso
+  for (const [batchIndex, batch] of batches.entries()) {
+    console.log(
+      `Procesando lote ${batchIndex + 1}/${batches.length} de productos...`
+    );
 
-    // Esperar entre peticiones para no sobrecargar el servidor
-    if (i < productCodes.length - 1) {
-      const delay = 1000; // 1 segundo entre peticiones
-      console.log(
-        `Esperando ${delay / 1000} segundos antes de la siguiente petición...`
-      );
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
+    const promises = batch.map((code) =>
+      limit(async () => {
+        try {
+          processedCount++;
+          console.log(
+            `[${processedCount}/${productCodes.length}] Procesando producto: ${code}`
+          );
+
+          const result = await getProductDescriptionAndSpecs(code);
+          productInfoMap.set(code, result);
+
+          // Mostrar resumen del resultado
+          const descriptionPreview = result.description
+            .substring(0, 50)
+            .replace(/\n/g, " ");
+          console.log(`- Información obtenida: ${descriptionPreview}...`);
+          console.log(
+            `- Tiene especificaciones: ${result.hasSpecs ? "Sí" : "No"}`
+          );
+
+          return { code, success: true };
+        } catch (error) {
+          console.error(`Error procesando ${code}: ${error.message}`);
+          // Registrar producto con error pero continuar con los demás
+          productInfoMap.set(code, {
+            productCode: code,
+            description: `Error al procesar: ${error.message}`,
+            rawDescription: "",
+            specs: {},
+            normalizedSpecs: {},
+            hasSpecs: false,
+          });
+          return { code, success: false, error: error.message };
+        }
+      })
+    );
+
+    await Promise.all(promises);
   }
 
   // Guardar productos con descripciones y especificaciones

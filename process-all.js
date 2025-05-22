@@ -4,6 +4,7 @@ const {
   processRefinedProducts,
   testImageConcurrencySpeed,
 } = require("./scraper");
+const { processAllProducts } = require("./description-scraper");
 
 // Configuración
 const inputFile = "./csv/DCW_20250511041525.csv";
@@ -62,12 +63,37 @@ async function processAllData(options = {}) {
       console.error(`❌ [FASE 2] Error: ${error.message}`);
     }
 
-    if (fs.existsSync(finalOutputFile)) {
-      console.log("\n=== PROCESO COMPLETO FINALIZADO CON ÉXITO ===");
-      console.log(`Archivo final guardado en: ${finalOutputFile}`);
-    } else {
-      console.error("\n⚠️ PROCESO FINALIZADO CON ADVERTENCIAS");
-      console.error("No se generó el archivo final completo.");
+    // 3. Mejorar las descripciones y especificaciones usando description-scraper
+    console.log("\n[FASE 3] Mejorando descripciones y especificaciones...");
+    const enhancedOutputFile = `${outputDir}/productos_enriquecidos.xlsx`;
+
+    try {
+      // Usar la misma concurrencia que en la fase 1 o un valor específico
+      const concurrencyDescriptions =
+        options.concurrencyDescriptions || options.concurrencyTransform || 5;
+      console.log(
+        `Usando nivel de concurrencia: ${concurrencyDescriptions} para descripciones y especificaciones`
+      );
+
+      await processAllProducts(finalOutputFile, enhancedOutputFile, {
+        concurrency: concurrencyDescriptions,
+      });
+      console.log(
+        `✅ [FASE 3] Completada. Archivo final: ${enhancedOutputFile}`
+      );
+
+      // Actualizar la referencia al archivo final
+      if (fs.existsSync(enhancedOutputFile)) {
+        console.log("\n=== PROCESO COMPLETO FINALIZADO CON ÉXITO ===");
+        console.log(`Archivo final guardado en: ${enhancedOutputFile}`);
+      }
+    } catch (error) {
+      console.error(`❌ [FASE 3] Error: ${error.message}`);
+      // Si falla la fase 3, seguimos considerando exitoso el proceso con el archivo de la fase 2
+      if (fs.existsSync(finalOutputFile)) {
+        console.log("\n=== PROCESO FINALIZADO CON ADVERTENCIAS ===");
+        console.log(`Archivo final (sin mejoras): ${finalOutputFile}`);
+      }
     }
   } catch (error) {
     console.error("\n❌ ERROR CRÍTICO EN EL PROCESO:", error);
@@ -101,13 +127,17 @@ async function main() {
       // Modo completo con concurrencia específica
       const concurrencyTransform = args[1] ? parseInt(args[1]) : 5;
       const concurrencyImages = args[2] ? parseInt(args[2]) : 15;
+      const concurrencyDescriptions = args[3]
+        ? parseInt(args[3])
+        : concurrencyTransform;
 
       console.log(
-        `MODO COMPLETO: Iniciando proceso con concurrencia ${concurrencyTransform} para transform y ${concurrencyImages} para imágenes...`
+        `MODO COMPLETO: Iniciando proceso con concurrencia ${concurrencyTransform} para transform, ${concurrencyImages} para imágenes y ${concurrencyDescriptions} para descripciones...`
       );
       await processAllData({
         concurrencyTransform,
         concurrencyImages,
+        concurrencyDescriptions,
       });
     } else {
       // Modo estándar
