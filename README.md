@@ -1,4 +1,5 @@
 markdown
+
 # 🛍️ Sistema de Procesamiento y Normalización de Datos de Productos
 
 ![Node.js](https://img.shields.io/badge/Node.js-14%2B-green)
@@ -28,6 +29,7 @@ Herramienta ETL (Extract, Transform, Load) para procesar y normalizar datos de p
 ## 📦 Instalación
 
 1. Clona el repositorio:
+
 ```bash
 git clone https://github.com/AlexeiEvenepoel/Refinar-datos.git
 Instala las dependencias:
@@ -86,3 +88,14 @@ Abre un Pull Request
 
 
 🔗 Enlace al proyecto: https://github.com/AlexeiEvenepoel/Refinar-datos
+
+# Probar velocidad y encontrar configuración óptima
+node process-all.js test-speed
+
+# Ejecutar con concurrencia personalizada
+node process-all.js full 10 20 15
+# (donde 10=concurrenciaTrasform, 20=concurrenciaImágenes, 15=concurrenciaDescripciones)
+
+# Probar un código de producto individual
+node description-scraper.js ACTE70207W
+```
