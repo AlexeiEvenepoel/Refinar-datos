@@ -7,7 +7,7 @@ const {
 const { processAllProducts } = require("./description-scraper");
 
 // Configuración
-const inputFile = "./csv/DCW_20250511041525.csv";
+const inputFile = "./csv/DCW_20250711060130.csv";
 const outputDir = "./output";
 const productsOutputFile = `${outputDir}/productos.xlsx`; // Solo un archivo final de productos
 const brandsOutputFile = `${outputDir}/brands.xlsx`;

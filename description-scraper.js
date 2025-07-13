@@ -366,6 +366,7 @@ function saveProductsWithInfo(products, productInfoMap, outputPath) {
     const productInfo = productInfoMap.get(product.ProductCode);
 
     const normalizedProduct = {
+      ProductCode: product.ProductCode,
       Title: product.Title,
       Description:
         productInfo && productInfo.description
@@ -374,10 +375,8 @@ function saveProductsWithInfo(products, productInfoMap, outputPath) {
       Price: product.Price,
       CategoryID: product.CategoryID,
       BrandID: product.BrandID,
-      Size: product.Size || "S",
       Featured: false, // Siempre en inglés FALSE, no FALSO
       Stock: product.Stock,
-      ProductCode: product.ProductCode,
       ImageUrl: product.ImageUrl,
     };
 

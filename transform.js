@@ -503,15 +503,14 @@ async function processProducts(inputFilePath, outputDir, options = {}) {
             const categoryId = categoriesMap.get(currentCategory);
 
             products.push({
-              Title: capitalizeFirstLetter(cleanTitle), // Primera letra en mayúscula
+              ProductCode: code,
+              Title: capitalizeFirstLetter(cleanTitle),
               Description: description,
               Price: price,
               CategoryID: categoryId,
               BrandID: brandId,
-              Size: "S",
-              Featured: false, // Siempre false en inglés
+              Featured: false,
               Stock: stock,
-              ProductCode: code,
               ImageUrl: imageInfo.imageUrl,
             });
           }
@@ -531,15 +530,14 @@ async function processProducts(inputFilePath, outputDir, options = {}) {
 
     // Modificar la parte donde se normalizan los productos
     const formattedProducts = products.map((product) => ({
+      ProductCode: product.ProductCode,
       Title: product.Title,
       Description: product.Description,
       Price: product.Price,
       CategoryID: product.CategoryID,
       BrandID: product.BrandID,
-      Size: product.Size || "S",
       Featured: false, // Asegurar que es booleano false, no string "FALSO"
       Stock: product.Stock,
-      ProductCode: product.ProductCode,
       ImageUrl: product.ImageUrl || "",
     }));
 
@@ -565,7 +563,7 @@ async function processProducts(inputFilePath, outputDir, options = {}) {
     // Crear archivo de marcas
     const brands = Array.from(brandsMap).map(([name, id]) => ({
       ID: id,
-      Name: name,
+      Name: name.toUpperCase(), // Convertir a mayúsculas
     }));
     const brandsWorkbook = XLSX.utils.book_new();
     const brandsWorksheet = XLSX.utils.json_to_sheet(brands);
@@ -575,7 +573,7 @@ async function processProducts(inputFilePath, outputDir, options = {}) {
     // Crear archivo de categorías
     const categories = Array.from(categoriesMap).map(([name, id]) => ({
       ID: id,
-      Name: name,
+      Name: name.toUpperCase(), // Convertir a mayúsculas
     }));
     const categoriesWorkbook = XLSX.utils.book_new();
     const categoriesWorksheet = XLSX.utils.json_to_sheet(categories);
