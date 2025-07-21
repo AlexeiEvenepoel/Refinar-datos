@@ -6,21 +6,7 @@ const {
 } = require("./scraper");
 const { processAllProducts } = require("./description-scraper");
 
-// Configuración
-const inputFile = "./csv/DCW_20250711060130.csv";
-const outputDir = "./output";
-const productsOutputFile = `${outputDir}/productos.xlsx`; // Solo un archivo final de productos
-const brandsOutputFile = `${outputDir}/brands.xlsx`;
-const categoriesOutputFile = `${outputDir}/categories.xlsx`;
-
-// Nombres de archivos temporales (serán eliminados al final)
-const tempRefinedFile = `${outputDir}/.temp_productos_refinados.xlsx`;
-const tempWithImagesFile = `${outputDir}/.temp_productos_con_imagenes.xlsx`;
-
-// Asegurar que existe la carpeta output
-if (!fs.existsSync(outputDir)) {
-  fs.mkdirSync(outputDir);
-}
+// Las configuraciones ahora se manejan dentro de processAllData() usando options
 
 // Función principal unificada y optimizada
 async function processAllData(options = {}) {
@@ -28,6 +14,22 @@ async function processAllData(options = {}) {
     console.log(
       "=== INICIANDO PROCESO COMPLETO DE TRANSFORMACIÓN Y ENRIQUECIMIENTO DE DATOS ==="
     );
+
+    // Usar rutas de las opciones o valores por defecto
+    const inputFile = options.inputFile || "./csv/DCW_20250711060130.csv";
+    const outputDir = options.outputDir || "./output";
+    const productsOutputFile = `${outputDir}/productos.xlsx`;
+    const brandsOutputFile = `${outputDir}/brands.xlsx`;
+    const categoriesOutputFile = `${outputDir}/categories.xlsx`;
+
+    // Nombres de archivos temporales (serán eliminados al final)
+    const tempRefinedFile = `${outputDir}/.temp_productos_refinados.xlsx`;
+    const tempWithImagesFile = `${outputDir}/.temp_productos_con_imagenes.xlsx`;
+
+    // Asegurar que existe la carpeta output
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
 
     // 1. Procesar CSV y generar productos refinados (filtrando los sin stock)
     console.log("\n[FASE 1] Transformación de datos CSV a Excel...");

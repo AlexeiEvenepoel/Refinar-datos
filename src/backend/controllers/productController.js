@@ -2,6 +2,7 @@ const productService = require("../services/productService");
 const path = require("path");
 const fs = require("fs");
 const multer = require("multer");
+const archiver = require("archiver");
 
 // Configuración de multer para uploads temporales
 const upload = multer({
@@ -78,28 +79,55 @@ class ProductController {
             outputDir: outputDir,
           });
 
-          // Crear ZIP con los archivos generados
-          const archiver = require("archiver");
-          const zipPath = `${tempDir}/productos_procesados.zip`;
-          const output = fs.createWriteStream(zipPath);
-          const archive = archiver("zip", { zlib: { level: 9 } });
-
-          archive.pipe(output);
-
-          // Agregar archivos al ZIP si existen
-          const filesToZip = [
-            { file: `${outputDir}/productos.xlsx`, name: "productos.xlsx" },
-            { file: `${outputDir}/brands.xlsx`, name: "marcas.xlsx" },
-            { file: `${outputDir}/categories.xlsx`, name: "categorias.xlsx" },
+          // Verificar que los archivos se hayan generado
+          const expectedFiles = [
+            { path: `${outputDir}/productos.xlsx`, name: "productos.xlsx" },
+            { path: `${outputDir}/brands.xlsx`, name: "marcas.xlsx" },
+            { path: `${outputDir}/categories.xlsx`, name: "categorias.xlsx" },
           ];
 
-          filesToZip.forEach(({ file, name }) => {
-            if (fs.existsSync(file)) {
-              archive.file(file, { name });
-            }
+          const existingFiles = expectedFiles.filter((file) =>
+            fs.existsSync(file.path)
+          );
+
+          if (existingFiles.length === 0) {
+            throw new Error("No se generaron archivos de salida");
+          }
+
+          // Crear ZIP con los archivos generados
+          const zipPath = `${tempDir}/productos_procesados.zip`;
+
+          await new Promise((resolve, reject) => {
+            const output = fs.createWriteStream(zipPath);
+            const archive = archiver("zip", { zlib: { level: 9 } });
+
+            output.on("close", () => {
+              console.log(`ZIP creado: ${archive.pointer()} bytes`);
+              resolve();
+            });
+
+            archive.on("error", (err) => {
+              reject(err);
+            });
+
+            archive.pipe(output);
+
+            // Agregar archivos existentes al ZIP
+            existingFiles.forEach(({ path: filePath, name }) => {
+              archive.file(filePath, { name });
+              console.log(`Agregado al ZIP: ${name}`);
+            });
+
+            archive.finalize();
           });
 
-          await archive.finalize();
+          // Verificar que el ZIP se creó correctamente
+          if (!fs.existsSync(zipPath)) {
+            throw new Error("Error creando archivo ZIP");
+          }
+
+          const zipStats = fs.statSync(zipPath);
+          console.log(`ZIP final: ${zipPath} (${zipStats.size} bytes)`);
 
           // Enviar el ZIP como respuesta
           res.setHeader("Content-Type", "application/zip");
@@ -116,6 +144,7 @@ class ProductController {
             setTimeout(() => {
               try {
                 fs.rmSync(tempDir, { recursive: true, force: true });
+                console.log(`Archivos temporales limpiados: ${tempDir}`);
               } catch (cleanupError) {
                 console.error(
                   "Error limpiando archivos temporales:",
@@ -123,6 +152,15 @@ class ProductController {
                 );
               }
             }, 5000); // Esperar 5 segundos antes de limpiar
+          });
+
+          zipStream.on("error", (streamError) => {
+            console.error("Error enviando ZIP:", streamError);
+            res.status(500).json({
+              success: false,
+              message: "Error enviando archivo procesado",
+              error: streamError.message,
+            });
           });
         } catch (processingError) {
           console.error("Error procesando productos:", processingError);
