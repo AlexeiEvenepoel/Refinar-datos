@@ -1,8 +1,36 @@
 {
+  "name": "sistema-procesamiento-productos",
+  "version": "1.0.0",
+  "description": "Sistema ETL para procesamiento y normalización de datos de productos",
+  "main": "src/backend/server.js",
+  "scripts": {
+    "start": "node src/backend/server.js",
+    "dev": "nodemon src/backend/server.js",
+    "process": "node legacy/process-all.js",
+    "process-full": "node legacy/process-all.js full",
+    "test-speed": "node legacy/process-all.js test-speed",
+    "test-product": "node legacy/description-scraper.js"
+  },
   "dependencies": {
+    "archiver": "^7.0.1",
     "axios": "^1.9.0",
     "cheerio": "^1.0.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "multer": "^2.0.2",
     "p-limit": "^6.2.0",
     "xlsx": "^0.18.5"
-  }
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  },
+  "keywords": [
+    "etl",
+    "productos",
+    "scraping",
+    "excel",
+    "nodejs"
+  ],
+  "author": "Tu Nombre",
+  "license": "MIT"
 }

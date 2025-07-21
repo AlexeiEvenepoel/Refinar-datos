@@ -34,7 +34,7 @@ async function processAllData(options = {}) {
 
     try {
       await processProducts(inputFile, outputDir, {
-        concurrency: options.concurrencyTransform || 10, // Aumentar concurrencia predeterminada
+        concurrency: parseInt(options.concurrencyTransform) || 10, // Asegurar que sea número
         skipImageProcessing: true, // Saltamos el procesamiento de imágenes aquí
         skipNoStock: true, // Nueva opción para filtrar productos sin stock
         tempFilePath: tempRefinedFile, // Usar archivo temporal
@@ -59,7 +59,7 @@ async function processAllData(options = {}) {
 
     try {
       await processRefinedProducts(tempRefinedFile, tempWithImagesFile, {
-        concurrency: options.concurrencyImages || 20, // Aumentar concurrencia predeterminada
+        concurrency: parseInt(options.concurrencyImages) || 20, // Asegurar que sea número
         skipFailedImages: true, // Nueva opción para omitir productos sin imagen
       });
       console.log(
@@ -76,7 +76,8 @@ async function processAllData(options = {}) {
 
     try {
       // Aumentar concurrencia predeterminada
-      const concurrencyDescriptions = options.concurrencyDescriptions || 15;
+      const concurrencyDescriptions =
+        parseInt(options.concurrencyDescriptions) || 15;
       console.log(
         `Usando nivel de concurrencia: ${concurrencyDescriptions} para descripciones y especificaciones`
       );

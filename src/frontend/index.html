@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Procesador de Productos CSV</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="header">
+        <div class="header-content">
+          <h1>📊 Procesador de Productos</h1>
+          <p>Sube tu archivo CSV y obtén datos procesados automáticamente</p>
+        </div>
+      </header>
+
+      <main class="main">
+        <!-- Upload Section -->
+        <section class="upload-section" id="upload-section">
+          <div class="upload-container">
+            <div class="drop-zone" id="drop-zone">
+              <div class="drop-zone-content">
+                <div class="upload-icon">📁</div>
+                <h3>Arrastra tu archivo CSV aquí</h3>
+                <p>o haz clic para seleccionar</p>
+                <input type="file" id="file-input" accept=".csv" hidden />
+              </div>
+            </div>
+
+            <div class="file-info" id="file-info" style="display: none">
+              <div class="file-details">
+                <span class="file-icon">📄</span>
+                <div class="file-text">
+                  <span class="file-name" id="file-name"></span>
+                  <span class="file-size" id="file-size"></span>
+                </div>
+                <button class="remove-file" id="remove-file">✕</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Configuration -->
+          <div class="config-panel" id="config-panel" style="display: none">
+            <h4>⚙️ Configuración de Procesamiento</h4>
+            <div class="config-grid">
+              <div class="config-item">
+                <label>Transformación</label>
+                <input
+                  type="range"
+                  id="concurrency-transform"
+                  min="5"
+                  max="20"
+                  value="10"
+                />
+                <span class="config-value">10</span>
+              </div>
+              <div class="config-item">
+                <label>Imágenes</label>
+                <input
+                  type="range"
+                  id="concurrency-images"
+                  min="10"
+                  max="30"
+                  value="20"
+                />
+                <span class="config-value">20</span>
+              </div>
+              <div class="config-item">
+                <label>Descripciones</label>
+                <input
+                  type="range"
+                  id="concurrency-descriptions"
+                  min="10"
+                  max="25"
+                  value="15"
+                />
+                <span class="config-value">15</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Process Button -->
+          <div class="action-panel" id="action-panel" style="display: none">
+            <button class="process-btn" id="process-btn">
+              <span class="btn-icon">🚀</span>
+              <span class="btn-text">Procesar Archivo</span>
+            </button>
+          </div>
+        </section>
+
+        <!-- Processing Section -->
+        <section
+          class="processing-section"
+          id="processing-section"
+          style="display: none"
+        >
+          <div class="processing-container">
+            <div class="processing-header">
+              <h3>🔄 Procesando tu archivo...</h3>
+              <p id="processing-status">Iniciando procesamiento...</p>
+            </div>
+
+            <div class="progress-container">
+              <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+              </div>
+              <div class="progress-text">
+                <span id="progress-percentage">0%</span>
+                <span id="progress-eta">Calculando tiempo...</span>
+              </div>
+            </div>
+
+            <div class="processing-steps">
+              <div class="step" id="step-1">
+                <div class="step-icon">📊</div>
+                <div class="step-text">
+                  <span class="step-title">Leyendo CSV</span>
+                  <span class="step-status">En espera...</span>
+                </div>
+              </div>
+              <div class="step" id="step-2">
+                <div class="step-icon">🔍</div>
+                <div class="step-text">
+                  <span class="step-title">Obteniendo descripciones</span>
+                  <span class="step-status">En espera...</span>
+                </div>
+              </div>
+              <div class="step" id="step-3">
+                <div class="step-icon">🖼️</div>
+                <div class="step-text">
+                  <span class="step-title">Descargando imágenes</span>
+                  <span class="step-status">En espera...</span>
+                </div>
+              </div>
+              <div class="step" id="step-4">
+                <div class="step-icon">📁</div>
+                <div class="step-text">
+                  <span class="step-title">Generando archivos</span>
+                  <span class="step-status">En espera...</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Success Section -->
+        <section
+          class="success-section"
+          id="success-section"
+          style="display: none"
+        >
+          <div class="success-container">
+            <div class="success-icon">✅</div>
+            <h3>¡Procesamiento Completado!</h3>
+            <p>
+              Tu archivo ha sido procesado exitosamente. La descarga comenzará
+              automáticamente.
+            </p>
+            <button class="restart-btn" id="restart-btn">
+              <span class="btn-icon">🔄</span>
+              Procesar Otro Archivo
+            </button>
+          </div>
+        </section>
+
+        <!-- Error Section -->
+        <section class="error-section" id="error-section" style="display: none">
+          <div class="error-container">
+            <div class="error-icon">❌</div>
+            <h3>Error en el Procesamiento</h3>
+            <p id="error-message">Ha ocurrido un error inesperado.</p>
+            <button class="restart-btn" id="error-restart-btn">
+              <span class="btn-icon">🔄</span>
+              Intentar de Nuevo
+            </button>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>
