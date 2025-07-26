@@ -1,7 +1,7 @@
 const XLSX = require("xlsx");
 const fs = require("fs");
 const { getProductImage, processProductCodes } = require("./scraper");
-const { getProductDescriptionAndSpecs } = require("./description-scraper");
+const { getProductDescriptionAndSpecs } = require("./description-scrape");
 
 // Inicializar como null y cargarlo dinámicamente después
 let pLimit = null;
@@ -504,14 +504,14 @@ async function processProducts(inputFilePath, outputDir, options = {}) {
 
             products.push({
               ProductCode: code,
-              Title: capitalizeFirstLetter(cleanTitle),
-              Description: description,
-              Price: price,
-              CategoryID: categoryId,
-              BrandID: brandId,
-              Featured: false,
+              Titulo: capitalizeFirstLetter(cleanTitle),
+              Descripcion: description,
+              Precio: price,
+              CategoriaID: categoryId,
+              MarcaID: brandId,
+              Destacado: false,
               Stock: stock,
-              ImageUrl: imageInfo.imageUrl,
+              URLImagen: imageInfo.imageUrl,
             });
           }
         } catch (err) {
@@ -531,14 +531,14 @@ async function processProducts(inputFilePath, outputDir, options = {}) {
     // Modificar la parte donde se normalizan los productos
     const formattedProducts = products.map((product) => ({
       ProductCode: product.ProductCode,
-      Title: product.Title,
-      Description: product.Description,
-      Price: product.Price,
-      CategoryID: product.CategoryID,
-      BrandID: product.BrandID,
-      Featured: false, // Asegurar que es booleano false, no string "FALSO"
+      Titulo: product.Titulo,
+      Descripcion: product.Descripcion,
+      Precio: product.Precio,
+      CategoriaID: product.CategoriaID,
+      MarcaID: product.MarcaID,
+      Destacado: false, // Asegurar que es booleano false, no string "FALSO"
       Stock: product.Stock,
-      ImageUrl: product.ImageUrl || "",
+      URLImagen: product.URLImagen || "",
     }));
 
     // Crear archivo de productos
@@ -563,7 +563,7 @@ async function processProducts(inputFilePath, outputDir, options = {}) {
     // Crear archivo de marcas
     const brands = Array.from(brandsMap).map(([name, id]) => ({
       ID: id,
-      Name: name.toUpperCase(), // Convertir a mayúsculas
+      Nombre: name.toUpperCase(), // Convertir a mayúsculas
     }));
     const brandsWorkbook = XLSX.utils.book_new();
     const brandsWorksheet = XLSX.utils.json_to_sheet(brands);
@@ -573,7 +573,7 @@ async function processProducts(inputFilePath, outputDir, options = {}) {
     // Crear archivo de categorías
     const categories = Array.from(categoriesMap).map(([name, id]) => ({
       ID: id,
-      Name: name.toUpperCase(), // Convertir a mayúsculas
+      Nombre: name.toUpperCase(), // Convertir a mayúsculas
     }));
     const categoriesWorkbook = XLSX.utils.book_new();
     const categoriesWorksheet = XLSX.utils.json_to_sheet(categories);

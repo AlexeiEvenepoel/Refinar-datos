@@ -260,16 +260,16 @@ function saveProductsWithImages(products, imageMap, outputPath) {
     };
 
     return {
-      Title: product.Title,
-      Description: product.Description,
-      Price: product.Price,
-      CategoryID: product.CategoryID,
-      BrandID: product.BrandID,
-      Size: product.Size || "S",
-      Featured: false, // Siempre en inglés FALSE, no FALSO
+      Titulo: product.Title,
+      Descripcion: product.Description,
+      Precio: product.Price,
+      CategoriaID: product.CategoryID,
+      MarcaID: product.BrandID,
+      Tamaño: product.Size || "S",
+      Destacado: false, // Siempre en inglés FALSE, no FALSO
       Stock: product.Stock,
-      ProductCode: product.ProductCode,
-      ImageUrl: imageInfo.imageUrl,
+      CodigoProducto: product.ProductCode,
+      UrlImagen: imageInfo.imageUrl,
     };
   });
 

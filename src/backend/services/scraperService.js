@@ -1,6 +1,6 @@
 const {
   getProductDescriptionAndSpecs,
-} = require("../../../legacy/description-scraper");
+} = require("../../../legacy/description-scrape");
 const { getProductImage } = require("../../../legacy/scraper");
 
 class ScraperService {

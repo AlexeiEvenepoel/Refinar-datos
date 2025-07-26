@@ -4,7 +4,7 @@ const {
   processRefinedProducts,
   testImageConcurrencySpeed,
 } = require("./scraper");
-const { processAllProducts } = require("./description-scraper");
+const { processAllProducts } = require("./description-scrape");
 
 // Las configuraciones ahora se manejan dentro de processAllData() usando options
 
